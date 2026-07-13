@@ -3,6 +3,7 @@ runs each symbol's assigned strategy, and routes any signal through the
 risk manager before placing an order.
 """
 
+import argparse
 import logging
 import time
 
@@ -72,17 +73,32 @@ def run_cycle(broker: Broker, portfolio: Portfolio, risk_manager: RiskManager, s
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run a single cycle and exit, instead of looping forever. "
+        "Used for externally-scheduled invocations (e.g. a cloud cron trigger) "
+        "where the scheduler itself provides the polling cadence.",
+    )
+    args = parser.parse_args()
+
     logger.info(
-        "Starting trading bot | base_url=%s paper=%s symbols=%s",
+        "Starting trading bot | base_url=%s paper=%s symbols=%s mode=%s",
         config.ALPACA_BASE_URL,
         config.IS_PAPER,
         config.SYMBOLS,
+        "once" if args.once else "loop",
     )
 
     broker = Broker()
     portfolio = Portfolio(broker)
     risk_manager = RiskManager(portfolio)
     strategies = build_strategies()
+
+    if args.once:
+        run_cycle(broker, portfolio, risk_manager, strategies)
+        return
 
     while True:
         run_cycle(broker, portfolio, risk_manager, strategies)
