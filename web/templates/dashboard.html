@@ -196,6 +196,16 @@
   }
   .chart-tooltip .val { font-weight: 700; }
   .chart-tooltip .time { color: var(--text-muted); margin-top: 1px; }
+
+  .sparkline { display: block; width: 90px; height: 26px; }
+  .sparkline polyline { fill: none; stroke-width: 1.5px; stroke-linejoin: round; stroke-linecap: round; }
+
+  .perf-tiles {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 28px;
+  }
 </style>
 </head>
 <body>
@@ -274,6 +284,7 @@
         <th>Strategy</th>
         <th>Signal</th>
         <th>Price</th>
+        <th>Trend</th>
         <th>Position</th>
         <th class="num">Unrealized P&amp;L</th>
       </tr>
@@ -287,7 +298,17 @@
           <span class="badge {{ row.signal.action }}">{{ row.signal.action }}</span>
           <div class="reason">{{ row.signal.reason }}</div>
         </td>
-        <td class="num">{{ "$%.2f"|format(row.signal.price) if row.signal.price is not none else "&mdash;" }}</td>
+        <td class="num">{{ "$%.2f"|format(row.signal.price) if row.signal.price is not none else "—" }}</td>
+        <td>
+          {% if row.signal.sparkline %}
+          <svg class="sparkline" viewBox="0 0 {{ row.signal.sparkline.width }} {{ row.signal.sparkline.height }}" preserveAspectRatio="none">
+            <polyline points="{{ row.signal.sparkline.polyline }}"
+                       stroke="{{ 'var(--good)' if row.signal.sparkline.is_up else 'var(--critical)' }}"></polyline>
+          </svg>
+          {% else %}
+          <span class="reason">&mdash;</span>
+          {% endif %}
+        </td>
         {% if row.position %}
         <td>{{ "%.4f"|format(row.position.qty) }} @ ${{ "%.2f"|format(row.position.avg_entry_price) }}</td>
         <td class="num {{ 'delta-good' if row.position.unrealized_pl >= 0 else 'delta-bad' }}">
@@ -301,6 +322,56 @@
       {% endfor %}
     </tbody>
   </table>
+
+  <h2>Performance &mdash; last {{ performance.window_days }} days</h2>
+  <div class="perf-tiles">
+    <div class="tile">
+      <div class="label">Win rate</div>
+      <div class="value">{{ "%.0f"|format(performance.win_rate) + "%" if performance.win_rate is not none else "—" }}</div>
+    </div>
+    <div class="tile">
+      <div class="label">Realized P&amp;L</div>
+      <div class="value {{ 'delta-good' if performance.total_realized_pnl >= 0 else 'delta-bad' }}">
+        {{ '+' if performance.total_realized_pnl >= 0 else '-' }}${{ "%.2f"|format(performance.total_realized_pnl|abs) }}
+      </div>
+    </div>
+    <div class="tile">
+      <div class="label">Closed / open trades</div>
+      <div class="value">{{ performance.closed_count }} / {{ performance.open_count }}</div>
+    </div>
+  </div>
+  {% if performance.trades %}
+  <table>
+    <thead>
+      <tr>
+        <th>Closed</th>
+        <th>Symbol</th>
+        <th class="num">Entry</th>
+        <th class="num">Exit</th>
+        <th class="num">Qty</th>
+        <th class="num">Realized P&amp;L</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in performance.trades %}
+      <tr>
+        <td>{{ t.closed_at }}</td>
+        <td><strong>{{ t.symbol }}</strong></td>
+        <td class="num">${{ "%.2f"|format(t.entry_price) }}</td>
+        <td class="num">${{ "%.2f"|format(t.exit_price) }}</td>
+        <td class="num">{{ "%.4f"|format(t.qty) }}</td>
+        <td class="num {{ 'delta-good' if t.is_win else 'delta-bad' }}">
+          {{ '+' if t.is_win else '-' }}${{ "%.2f"|format(t.realized_pnl|abs) }}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="chart-card">
+    <div class="empty-state">No closed round-trip trades in the last {{ performance.window_days }} days yet &mdash; win rate will populate once a position is opened and closed.</div>
+  </div>
+  {% endif %}
 
   <h2>Recent Orders</h2>
   <table>

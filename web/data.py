@@ -25,15 +25,44 @@ _lock = threading.Lock()
 _cache = {"data": None, "expires_at": 0.0}
 
 
+_SPARKLINE_WIDTH = 100
+_SPARKLINE_HEIGHT = 28
+_SPARKLINE_BARS = 30
+
+
+def _sparkline_from_bars(bars):
+    closes = bars["close"].tail(_SPARKLINE_BARS).tolist()
+    if len(closes) < 2:
+        return None
+    min_v, max_v = min(closes), max(closes)
+    span = max_v - min_v or 1.0
+    n = len(closes)
+    pad = 2
+    plot_h = _SPARKLINE_HEIGHT - 2 * pad
+    xs_ys = []
+    for i, v in enumerate(closes):
+        x = (i / (n - 1)) * _SPARKLINE_WIDTH
+        y = pad + plot_h - ((v - min_v) / span) * plot_h
+        xs_ys.append((round(x, 2), round(y, 2)))
+    polyline = " ".join(f"{x},{y}" for x, y in xs_ys)
+    return {
+        "polyline": polyline,
+        "is_up": closes[-1] >= closes[0],
+        "width": _SPARKLINE_WIDTH,
+        "height": _SPARKLINE_HEIGHT,
+    }
+
+
 def _signal_for(symbol):
     bars = _broker.get_bars(symbol)
     if bars.empty:
-        return {"action": "hold", "reason": "no bar data available", "price": None}
+        return {"action": "hold", "reason": "no bar data available", "price": None, "sparkline": None}
     signal = _strategies[symbol].generate_signal(bars)
     return {
         "action": signal.action.value,
         "reason": signal.reason,
         "price": float(bars["close"].iloc[-1]),
+        "sparkline": _sparkline_from_bars(bars),
     }
 
 
@@ -103,6 +132,61 @@ def _compute_equity_chart():
     }
 
 
+_PERFORMANCE_WINDOW_DAYS = 7
+
+
+def _compute_performance_history():
+    try:
+        orders = _broker.get_filled_orders_since(days=_PERFORMANCE_WINDOW_DAYS)
+    except Exception:
+        logger.exception("failed to fetch filled orders for performance history")
+        return {"trades": [], "win_rate": None, "total_realized_pnl": 0.0, "open_count": 0}
+
+    # No shorting in this bot: each symbol's fills alternate BUY, SELL, BUY, SELL...
+    # so a simple per-symbol chronological walk pairs every round trip correctly.
+    open_buys = {}  # symbol -> order
+    trades = []
+    open_count = 0
+
+    for order in orders:
+        side = order.side.value if hasattr(order.side, "value") else order.side
+        qty = float(order.filled_qty)
+        price = float(order.filled_avg_price)
+
+        if side == "buy":
+            open_buys[order.symbol] = {"qty": qty, "price": price, "filled_at": order.filled_at}
+        elif side == "sell" and order.symbol in open_buys:
+            buy = open_buys.pop(order.symbol)
+            realized_pnl = (price - buy["price"]) * qty
+            trades.append(
+                {
+                    "symbol": order.symbol,
+                    "entry_price": buy["price"],
+                    "exit_price": price,
+                    "qty": qty,
+                    "realized_pnl": realized_pnl,
+                    "is_win": realized_pnl >= 0,
+                    "closed_at": order.filled_at,
+                }
+            )
+
+    open_count = len(open_buys)
+    closed = len(trades)
+    wins = sum(1 for t in trades if t["is_win"])
+    win_rate = (wins / closed * 100) if closed else None
+    total_realized_pnl = sum(t["realized_pnl"] for t in trades)
+
+    return {
+        "trades": sorted(trades, key=lambda t: t["closed_at"], reverse=True),
+        "win_rate": win_rate,
+        "closed_count": closed,
+        "win_count": wins,
+        "total_realized_pnl": total_realized_pnl,
+        "open_count": open_count,
+        "window_days": _PERFORMANCE_WINDOW_DAYS,
+    }
+
+
 def _compute():
     rows = []
     for symbol in config.SYMBOLS:
@@ -135,6 +219,7 @@ def _compute():
         "rows": rows,
         "orders": orders,
         "chart": _compute_equity_chart(),
+        "performance": _compute_performance_history(),
     }
 
 

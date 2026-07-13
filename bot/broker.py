@@ -93,6 +93,14 @@ class Broker:
         request = GetOrdersRequest(status=QueryOrderStatus.ALL, limit=limit, direction=Sort.DESC)
         return self.trading_client.get_orders(request)
 
+    def get_filled_orders_since(self, days: int = 7):
+        after = datetime.now(timezone.utc) - timedelta(days=days)
+        request = GetOrdersRequest(
+            status=QueryOrderStatus.CLOSED, after=after, direction=Sort.ASC, limit=500
+        )
+        orders = self.trading_client.get_orders(request)
+        return [o for o in orders if o.filled_at is not None]
+
     def get_portfolio_history(self, period: str = "1D", timeframe: str = "15Min"):
         request = GetPortfolioHistoryRequest(
             period=period, timeframe=timeframe, extended_hours=True
