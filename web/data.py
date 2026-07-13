@@ -8,6 +8,7 @@ import logging
 import threading
 import time
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import config
 from bot.broker import Broker
@@ -15,6 +16,23 @@ from bot.main import build_strategies
 from bot.portfolio import Portfolio
 
 logger = logging.getLogger("web.data")
+
+_CHICAGO = ZoneInfo("America/Chicago")
+
+
+def _fmt_chicago(dt, fmt="%b %-d, %-I:%M %p"):
+    """Format a UTC-aware datetime (or epoch seconds) in Chicago local time,
+    with the correct CST/CDT label for that date (zoneinfo handles the DST
+    transition automatically -- no manual UTC offset math)."""
+    if dt is None:
+        return None
+    if isinstance(dt, (int, float)):
+        dt = datetime.fromtimestamp(dt, tz=timezone.utc)
+    elif dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    local = dt.astimezone(_CHICAGO)
+    return local.strftime(fmt) + " " + local.tzname()
+
 
 _broker = Broker()
 _portfolio = Portfolio(_broker)
@@ -101,7 +119,7 @@ def _compute_equity_chart():
                 "x": round(x, 2),
                 "y": round(y, 2),
                 "equity": eq,
-                "time_label": datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%-I:%M %p UTC"),
+                "time_label": _fmt_chicago(ts, fmt="%-I:%M %p"),
             }
         )
 
@@ -135,54 +153,71 @@ def _compute_equity_chart():
 _PERFORMANCE_WINDOW_DAYS = 7
 
 
-def _compute_performance_history():
+def _compute_transactions():
+    """Single source of truth for both the performance summary tiles and the
+    full transaction history table -- one fetch, one chronological pairing
+    walk, so the two sections can never disagree with each other."""
+    empty = {
+        "history": [],
+        "win_rate": None,
+        "closed_count": 0,
+        "win_count": 0,
+        "total_realized_pnl": 0.0,
+        "open_count": 0,
+        "window_days": _PERFORMANCE_WINDOW_DAYS,
+    }
     try:
         orders = _broker.get_filled_orders_since(days=_PERFORMANCE_WINDOW_DAYS)
     except Exception:
-        logger.exception("failed to fetch filled orders for performance history")
-        return {"trades": [], "win_rate": None, "total_realized_pnl": 0.0, "open_count": 0}
+        logger.exception("failed to fetch filled orders for transaction history")
+        return empty
+    if not orders:
+        return empty
 
     # No shorting in this bot: each symbol's fills alternate BUY, SELL, BUY, SELL...
     # so a simple per-symbol chronological walk pairs every round trip correctly.
-    open_buys = {}  # symbol -> order
-    trades = []
-    open_count = 0
+    open_buys = {}  # symbol -> {qty, price}
+    history = []
 
     for order in orders:
         side = order.side.value if hasattr(order.side, "value") else order.side
         qty = float(order.filled_qty)
         price = float(order.filled_avg_price)
+        entry = {
+            "time": _fmt_chicago(order.filled_at),
+            "sort_key": order.filled_at,
+            "symbol": order.symbol,
+            "action": "Bought" if side == "buy" else "Sold",
+            "side": side,
+            "price": price,
+            "qty": qty,
+            "realized_pnl": None,
+            "is_win": None,
+        }
 
         if side == "buy":
-            open_buys[order.symbol] = {"qty": qty, "price": price, "filled_at": order.filled_at}
+            open_buys[order.symbol] = {"qty": qty, "price": price}
         elif side == "sell" and order.symbol in open_buys:
             buy = open_buys.pop(order.symbol)
             realized_pnl = (price - buy["price"]) * qty
-            trades.append(
-                {
-                    "symbol": order.symbol,
-                    "entry_price": buy["price"],
-                    "exit_price": price,
-                    "qty": qty,
-                    "realized_pnl": realized_pnl,
-                    "is_win": realized_pnl >= 0,
-                    "closed_at": order.filled_at,
-                }
-            )
+            entry["realized_pnl"] = realized_pnl
+            entry["is_win"] = realized_pnl >= 0
 
-    open_count = len(open_buys)
-    closed = len(trades)
-    wins = sum(1 for t in trades if t["is_win"])
+        history.append(entry)
+
+    closed_trades = [e for e in history if e["realized_pnl"] is not None]
+    closed = len(closed_trades)
+    wins = sum(1 for t in closed_trades if t["is_win"])
     win_rate = (wins / closed * 100) if closed else None
-    total_realized_pnl = sum(t["realized_pnl"] for t in trades)
+    total_realized_pnl = sum(t["realized_pnl"] for t in closed_trades)
 
     return {
-        "trades": sorted(trades, key=lambda t: t["closed_at"], reverse=True),
+        "history": sorted(history, key=lambda e: e["sort_key"], reverse=True),
         "win_rate": win_rate,
         "closed_count": closed,
         "win_count": wins,
         "total_realized_pnl": total_realized_pnl,
-        "open_count": open_count,
+        "open_count": len(open_buys),
         "window_days": _PERFORMANCE_WINDOW_DAYS,
     }
 
@@ -204,22 +239,15 @@ def _compute():
             }
         )
 
-    try:
-        orders = list(_broker.get_recent_orders(limit=20))
-    except Exception:
-        logger.exception("failed to fetch recent orders")
-        orders = []
-
     return {
-        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "generated_at": _fmt_chicago(datetime.now(timezone.utc), fmt="%b %-d, %Y %-I:%M:%S %p"),
         "market_open": _broker.is_market_open(),
         "equity": _portfolio.equity(),
         "cash": _portfolio.cash(),
         "exposure_pct": _portfolio.exposure_pct(),
         "rows": rows,
-        "orders": orders,
         "chart": _compute_equity_chart(),
-        "performance": _compute_performance_history(),
+        "performance": _compute_transactions(),
     }
 
 

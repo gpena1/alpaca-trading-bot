@@ -327,7 +327,7 @@
   <div class="perf-tiles">
     <div class="tile">
       <div class="label">Win rate</div>
-      <div class="value">{{ "%.0f"|format(performance.win_rate) + "%" if performance.win_rate is not none else "—" }}</div>
+      <div class="value">{{ ("%.0f"|format(performance.win_rate)) + "%" if performance.win_rate is not none else "—" }}</div>
     </div>
     <div class="tile">
       <div class="label">Realized P&amp;L</div>
@@ -340,66 +340,46 @@
       <div class="value">{{ performance.closed_count }} / {{ performance.open_count }}</div>
     </div>
   </div>
-  {% if performance.trades %}
+
+  <h2>Transaction History &mdash; last {{ performance.window_days }} days</h2>
+  {% if performance.history %}
   <table>
     <thead>
       <tr>
-        <th>Closed</th>
+        <th>Time</th>
         <th>Symbol</th>
-        <th class="num">Entry</th>
-        <th class="num">Exit</th>
+        <th>Action</th>
+        <th class="num">Price</th>
         <th class="num">Qty</th>
         <th class="num">Realized P&amp;L</th>
       </tr>
     </thead>
     <tbody>
-      {% for t in performance.trades %}
+      {% for e in performance.history %}
       <tr>
-        <td>{{ t.closed_at }}</td>
-        <td><strong>{{ t.symbol }}</strong></td>
-        <td class="num">${{ "%.2f"|format(t.entry_price) }}</td>
-        <td class="num">${{ "%.2f"|format(t.exit_price) }}</td>
-        <td class="num">{{ "%.4f"|format(t.qty) }}</td>
-        <td class="num {{ 'delta-good' if t.is_win else 'delta-bad' }}">
-          {{ '+' if t.is_win else '-' }}${{ "%.2f"|format(t.realized_pnl|abs) }}
+        <td>{{ e.time }}</td>
+        <td><strong>{{ e.symbol }}</strong></td>
+        <td>
+          <span class="badge {{ 'buy' if e.side == 'buy' else 'sell' }}">{{ e.action }}</span>
         </td>
+        <td class="num">${{ "%.2f"|format(e.price) }}</td>
+        <td class="num">{{ "%.4f"|format(e.qty) }}</td>
+        {% if e.realized_pnl is not none %}
+        <td class="num {{ 'delta-good' if e.is_win else 'delta-bad' }}">
+          {{ '+' if e.is_win else '-' }}${{ "%.2f"|format(e.realized_pnl|abs) }}
+        </td>
+        {% else %}
+        <td class="num reason">position opened</td>
+        {% endif %}
       </tr>
       {% endfor %}
     </tbody>
   </table>
   {% else %}
   <div class="chart-card">
-    <div class="empty-state">No closed round-trip trades in the last {{ performance.window_days }} days yet &mdash; win rate will populate once a position is opened and closed.</div>
+    <div class="empty-state">No transactions in the last {{ performance.window_days }} days yet &mdash; this fills in once the bot places its first trade.</div>
   </div>
   {% endif %}
-
-  <h2>Recent Orders</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Submitted</th>
-        <th>Symbol</th>
-        <th>Side</th>
-        <th class="num">Qty</th>
-        <th>Status</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% if orders %}
-        {% for order in orders %}
-        <tr>
-          <td>{{ order.submitted_at }}</td>
-          <td><strong>{{ order.symbol }}</strong></td>
-          <td>{{ order.side.value if order.side is defined and order.side else order.side }}</td>
-          <td class="num">{{ order.qty }}</td>
-          <td>{{ order.status.value if order.status is defined and order.status else order.status }}</td>
-        </tr>
-        {% endfor %}
-      {% else %}
-        <tr><td colspan="5" class="empty-state">No orders placed yet.</td></tr>
-      {% endif %}
-    </tbody>
-  </table>
   </div>
 
 </div>
