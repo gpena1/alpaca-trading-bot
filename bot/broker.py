@@ -15,7 +15,7 @@ from alpaca.data.requests import CryptoBarsRequest, StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce
-from alpaca.trading.requests import GetOrdersRequest, MarketOrderRequest
+from alpaca.trading.requests import GetOrdersRequest, GetPortfolioHistoryRequest, MarketOrderRequest
 
 import config
 
@@ -92,6 +92,12 @@ class Broker:
     def get_recent_orders(self, limit: int = 20):
         request = GetOrdersRequest(status=QueryOrderStatus.ALL, limit=limit, direction=Sort.DESC)
         return self.trading_client.get_orders(request)
+
+    def get_portfolio_history(self, period: str = "1D", timeframe: str = "15Min"):
+        request = GetPortfolioHistoryRequest(
+            period=period, timeframe=timeframe, extended_hours=True
+        )
+        return self.trading_client.get_portfolio_history(request)
 
     def submit_market_order(self, symbol: str, qty: float, side: OrderSide):
         # Crypto supports GTC; equities must use DAY orders that respect market hours.

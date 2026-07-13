@@ -141,6 +141,61 @@
   .delta-good { color: var(--delta-good); font-weight: 600; }
   .delta-bad { color: var(--delta-bad); font-weight: 600; }
   .empty-state { color: var(--text-muted); text-align: center; padding: 24px; }
+
+  .chart-card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 18px 8px;
+    margin-bottom: 24px;
+  }
+  .chart-card .hero-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 4px;
+  }
+  .chart-card .hero-value {
+    font-size: 36px;
+    font-weight: 600;
+    font-variant-numeric: normal;
+    margin-bottom: 2px;
+  }
+  .chart-card .hero-delta { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+  .chart-wrap { position: relative; width: 100%; }
+  .chart-wrap svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .chart-line { fill: none; stroke-width: 2px; stroke-linejoin: round; stroke-linecap: round; }
+  .chart-area { opacity: 0.10; }
+  .chart-end-dot { stroke-width: 2px; }
+  .chart-crosshair {
+    stroke: var(--text-muted);
+    stroke-width: 1px;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .chart-hover-dot {
+    stroke-width: 2px;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .chart-tooltip {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform: translate(-50%, -115%);
+    background: var(--text-primary);
+    color: var(--page-plane);
+    font-size: 12px;
+    padding: 6px 9px;
+    border-radius: 6px;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.08s ease;
+  }
+  .chart-tooltip .val { font-weight: 700; }
+  .chart-tooltip .time { color: var(--text-muted); margin-top: 1px; }
 </style>
 </head>
 <body>
@@ -156,6 +211,85 @@
 
   <h1>Trading Bot Dashboard</h1>
   <div class="meta">Paper trading &middot; updated {{ generated_at }}</div>
+
+  {% if chart %}
+  <div class="chart-card">
+    <div class="hero-label">Equity today</div>
+    <div class="hero-value">${{ "%.2f"|format(chart.end_equity) }}</div>
+    <div class="hero-delta {{ 'delta-good' if chart.is_up else 'delta-bad' }}">
+      {{ '+' if chart.is_up else '-' }}${{ "%.2f"|format(chart.delta|abs) }}
+      ({{ '+' if chart.is_up else '-' }}{{ "%.2f"|format(chart.delta_pct|abs) }}%) today
+    </div>
+    <div class="chart-wrap" id="equity-chart-wrap">
+      <svg viewBox="0 0 {{ chart.width }} {{ chart.height }}" preserveAspectRatio="none" id="equity-chart-svg">
+        <path class="chart-area" d="{{ chart.area_path }}" fill="{{ 'var(--good)' if chart.is_up else 'var(--critical)' }}"></path>
+        <polyline class="chart-line" points="{{ chart.polyline }}" stroke="{{ 'var(--good)' if chart.is_up else 'var(--critical)' }}"></polyline>
+        <circle class="chart-end-dot" cx="{{ chart.last_point.x }}" cy="{{ chart.last_point.y }}" r="5"
+                fill="{{ 'var(--good)' if chart.is_up else 'var(--critical)' }}" stroke="var(--surface-1)"></circle>
+        <line class="chart-crosshair" id="equity-chart-crosshair" x1="0" y1="0" x2="0" y2="{{ chart.height }}"></line>
+        <circle class="chart-hover-dot" id="equity-chart-hover-dot" r="5"
+                fill="{{ 'var(--good)' if chart.is_up else 'var(--critical)' }}" stroke="var(--surface-1)"></circle>
+      </svg>
+      <div class="chart-tooltip" id="equity-chart-tooltip">
+        <div class="val"></div>
+        <div class="time"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var points = {{ chart.points | tojson }};
+      var svg = document.getElementById('equity-chart-svg');
+      var wrap = document.getElementById('equity-chart-wrap');
+      var crosshair = document.getElementById('equity-chart-crosshair');
+      var hoverDot = document.getElementById('equity-chart-hover-dot');
+      var tooltip = document.getElementById('equity-chart-tooltip');
+      var viewWidth = {{ chart.width }};
+      if (!points.length) return;
+
+      function showAt(idx) {
+        var p = points[idx];
+        crosshair.setAttribute('x1', p.x);
+        crosshair.setAttribute('x2', p.x);
+        crosshair.style.opacity = 1;
+        hoverDot.setAttribute('cx', p.x);
+        hoverDot.setAttribute('cy', p.y);
+        hoverDot.style.opacity = 1;
+
+        var rect = svg.getBoundingClientRect();
+        var scale = rect.width / viewWidth;
+        tooltip.style.left = (p.x * scale) + 'px';
+        tooltip.style.top = (p.y * (rect.height / {{ chart.height }})) + 'px';
+        tooltip.querySelector('.val').textContent = '$' + p.equity.toFixed(2);
+        tooltip.querySelector('.time').textContent = p.time_label;
+        tooltip.style.opacity = 1;
+      }
+
+      function hide() {
+        crosshair.style.opacity = 0;
+        hoverDot.style.opacity = 0;
+        tooltip.style.opacity = 0;
+      }
+
+      function onMove(evt) {
+        var rect = svg.getBoundingClientRect();
+        var relX = (evt.clientX - rect.left) / rect.width * viewWidth;
+        var idx = Math.round(relX / viewWidth * (points.length - 1));
+        idx = Math.max(0, Math.min(points.length - 1, idx));
+        showAt(idx);
+      }
+
+      wrap.addEventListener('pointermove', onMove);
+      wrap.addEventListener('pointerleave', hide);
+    })();
+  </script>
+  {% else %}
+  <div class="chart-card">
+    <div class="hero-label">Equity today</div>
+    <div class="hero-value">${{ "%.2f"|format(equity) }}</div>
+    <div class="empty-state">Not enough intraday history yet to chart &mdash; check back once the account has more activity.</div>
+  </div>
+  {% endif %}
 
   <div class="tiles">
     <div class="tile">
@@ -201,7 +335,7 @@
         {% if row.position %}
         <td>{{ "%.4f"|format(row.position.qty) }} @ ${{ "%.2f"|format(row.position.avg_entry_price) }}</td>
         <td class="num {{ 'delta-good' if row.position.unrealized_pl >= 0 else 'delta-bad' }}">
-          {{ '+' if row.position.unrealized_pl >= 0 else '' }}${{ "%.2f"|format(row.position.unrealized_pl) }}
+          {{ '+' if row.position.unrealized_pl >= 0 else '-' }}${{ "%.2f"|format(row.position.unrealized_pl|abs) }}
         </td>
         {% else %}
         <td class="reason">no position</td>
