@@ -210,6 +210,8 @@
   </div>
 
   <h1>Trading Bot Dashboard</h1>
+
+  <div id="dashboard-body">
   <div class="meta">Paper trading &middot; updated {{ generated_at }}</div>
 
   {% if chart %}
@@ -236,53 +238,7 @@
       </div>
     </div>
   </div>
-  <script>
-    (function () {
-      var points = {{ chart.points | tojson }};
-      var svg = document.getElementById('equity-chart-svg');
-      var wrap = document.getElementById('equity-chart-wrap');
-      var crosshair = document.getElementById('equity-chart-crosshair');
-      var hoverDot = document.getElementById('equity-chart-hover-dot');
-      var tooltip = document.getElementById('equity-chart-tooltip');
-      var viewWidth = {{ chart.width }};
-      if (!points.length) return;
-
-      function showAt(idx) {
-        var p = points[idx];
-        crosshair.setAttribute('x1', p.x);
-        crosshair.setAttribute('x2', p.x);
-        crosshair.style.opacity = 1;
-        hoverDot.setAttribute('cx', p.x);
-        hoverDot.setAttribute('cy', p.y);
-        hoverDot.style.opacity = 1;
-
-        var rect = svg.getBoundingClientRect();
-        var scale = rect.width / viewWidth;
-        tooltip.style.left = (p.x * scale) + 'px';
-        tooltip.style.top = (p.y * (rect.height / {{ chart.height }})) + 'px';
-        tooltip.querySelector('.val').textContent = '$' + p.equity.toFixed(2);
-        tooltip.querySelector('.time').textContent = p.time_label;
-        tooltip.style.opacity = 1;
-      }
-
-      function hide() {
-        crosshair.style.opacity = 0;
-        hoverDot.style.opacity = 0;
-        tooltip.style.opacity = 0;
-      }
-
-      function onMove(evt) {
-        var rect = svg.getBoundingClientRect();
-        var relX = (evt.clientX - rect.left) / rect.width * viewWidth;
-        var idx = Math.round(relX / viewWidth * (points.length - 1));
-        idx = Math.max(0, Math.min(points.length - 1, idx));
-        showAt(idx);
-      }
-
-      wrap.addEventListener('pointermove', onMove);
-      wrap.addEventListener('pointerleave', hide);
-    })();
-  </script>
+  <script type="application/json" id="equity-chart-data">{{ {"points": chart.points, "width": chart.width, "height": chart.height} | tojson }}</script>
   {% else %}
   <div class="chart-card">
     <div class="hero-label">Equity today</div>
@@ -373,7 +329,88 @@
       {% endif %}
     </tbody>
   </table>
+  </div>
 
 </div>
+<script>
+  function setupEquityChart() {
+    var dataEl = document.getElementById('equity-chart-data');
+    var svg = document.getElementById('equity-chart-svg');
+    var wrap = document.getElementById('equity-chart-wrap');
+    var crosshair = document.getElementById('equity-chart-crosshair');
+    var hoverDot = document.getElementById('equity-chart-hover-dot');
+    var tooltip = document.getElementById('equity-chart-tooltip');
+    if (!dataEl || !svg || !wrap) return;
+    var chartData = JSON.parse(dataEl.textContent);
+    var points = chartData.points || [];
+    if (!points.length) return;
+    var viewWidth = chartData.width;
+    var viewHeight = chartData.height;
+
+    function showAt(idx) {
+      var p = points[idx];
+      crosshair.setAttribute('x1', p.x);
+      crosshair.setAttribute('x2', p.x);
+      crosshair.style.opacity = 1;
+      hoverDot.setAttribute('cx', p.x);
+      hoverDot.setAttribute('cy', p.y);
+      hoverDot.style.opacity = 1;
+
+      var rect = svg.getBoundingClientRect();
+      var scale = rect.width / viewWidth;
+      tooltip.style.left = (p.x * scale) + 'px';
+      tooltip.style.top = (p.y * (rect.height / viewHeight)) + 'px';
+      tooltip.querySelector('.val').textContent = '$' + p.equity.toFixed(2);
+      tooltip.querySelector('.time').textContent = p.time_label;
+      tooltip.style.opacity = 1;
+    }
+
+    function hide() {
+      crosshair.style.opacity = 0;
+      hoverDot.style.opacity = 0;
+      tooltip.style.opacity = 0;
+    }
+
+    function onMove(evt) {
+      var rect = svg.getBoundingClientRect();
+      var relX = (evt.clientX - rect.left) / rect.width * viewWidth;
+      var idx = Math.round(relX / viewWidth * (points.length - 1));
+      idx = Math.max(0, Math.min(points.length - 1, idx));
+      showAt(idx);
+    }
+
+    wrap.addEventListener('pointermove', onMove);
+    wrap.addEventListener('pointerleave', hide);
+  }
+
+  setupEquityChart();
+
+  // Auto-refresh: re-fetch this same page every 45s (matches the server's own
+  // cache TTL) and swap in just the data section, so the view updates without
+  // a jarring full-page reload or losing scroll position.
+  (function () {
+    var REFRESH_MS = 45000;
+
+    function refresh() {
+      fetch(window.location.href, { credentials: 'include' })
+        .then(function (res) { return res.ok ? res.text() : null; })
+        .then(function (html) {
+          if (!html) return;
+          var doc = new DOMParser().parseFromString(html, 'text/html');
+          var freshBody = doc.getElementById('dashboard-body');
+          var currentBody = document.getElementById('dashboard-body');
+          if (!freshBody || !currentBody) return;
+          currentBody.innerHTML = freshBody.innerHTML;
+          setupEquityChart();
+        })
+        .catch(function () {
+          // Silently skip a failed refresh (network blip, cold-start) -- the
+          // next interval tick will just try again.
+        });
+    }
+
+    setInterval(refresh, REFRESH_MS);
+  })();
+</script>
 </body>
 </html>
