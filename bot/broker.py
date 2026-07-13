@@ -5,6 +5,7 @@ gated by market hours; crypto uses the crypto data API and trades 24/7.
 """
 
 import logging
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 from alpaca.data.historical.crypto import CryptoHistoricalDataClient
@@ -44,11 +45,18 @@ class Broker:
 
     def get_bars(self, symbol: str, limit: int = config.LOOKBACK_BARS) -> pd.DataFrame:
         timeframe = TimeFrame(config.BAR_TIMEFRAME_MINUTES, TimeFrame.Minute.unit)
+        # Without an explicit start, Alpaca defaults to "since UTC midnight
+        # today", which starves the lookback window (especially for equities,
+        # which only trade ~6.5h/day). 10 calendar days comfortably covers
+        # LOOKBACK_BARS for both crypto (trades 24/7) and equities (accounting
+        # for weekends/holidays).
+        start = datetime.now(timezone.utc) - timedelta(days=10)
 
         if is_crypto(symbol):
             request = CryptoBarsRequest(
                 symbol_or_symbols=symbol,
                 timeframe=timeframe,
+                start=start,
                 limit=limit,
             )
             bar_set = self.crypto_data_client.get_crypto_bars(request)
@@ -56,6 +64,7 @@ class Broker:
             request = StockBarsRequest(
                 symbol_or_symbols=symbol,
                 timeframe=timeframe,
+                start=start,
                 limit=limit,
             )
             bar_set = self.stock_data_client.get_stock_bars(request)
