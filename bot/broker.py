@@ -8,13 +8,14 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
+from alpaca.common.enums import Sort
 from alpaca.data.historical.crypto import CryptoHistoricalDataClient
 from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.requests import CryptoBarsRequest, StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import OrderSide, TimeInForce
-from alpaca.trading.requests import MarketOrderRequest
+from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce
+from alpaca.trading.requests import GetOrdersRequest, MarketOrderRequest
 
 import config
 
@@ -87,6 +88,10 @@ class Broker:
             return self.trading_client.get_open_position(symbol.replace("/", ""))
         except Exception:
             return None
+
+    def get_recent_orders(self, limit: int = 20):
+        request = GetOrdersRequest(status=QueryOrderStatus.ALL, limit=limit, direction=Sort.DESC)
+        return self.trading_client.get_orders(request)
 
     def submit_market_order(self, symbol: str, qty: float, side: OrderSide):
         # Crypto supports GTC; equities must use DAY orders that respect market hours.

@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trading Bot Dashboard</title>
+<style>
+  :root {
+    --surface-1:      #fcfcfb;
+    --page-plane:      #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:      #898781;
+    --gridline:        #e1e0d9;
+    --border:          rgba(11,11,11,0.10);
+    --good:            #0ca30c;
+    --critical:        #d03b3b;
+    --warning:         #fab219;
+    --warning-bg:      #fff6e0;
+    --delta-good:      #006300;
+    --delta-bad:       #d03b3b;
+    --hold-bg:         #eeede8;
+    --hold-text:       #52514e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface-1:      #1a1a19;
+      --page-plane:      #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:      #898781;
+      --gridline:        #2c2c2a;
+      --border:          rgba(255,255,255,0.10);
+      --good:            #0ca30c;
+      --critical:        #e66767;
+      --warning:         #c98500;
+      --warning-bg:      #2b2410;
+      --delta-good:      #0ca30c;
+      --delta-bad:       #e66767;
+      --hold-bg:         #2c2c2a;
+      --hold-text:       #c3c2b7;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page-plane);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 20px 60px; }
+
+  .disclaimer {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    background: var(--warning-bg);
+    border: 1px solid var(--warning);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 24px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .disclaimer .icon { font-size: 18px; line-height: 1; }
+  .disclaimer strong { color: var(--text-primary); }
+  .disclaimer span.body { color: var(--text-secondary); }
+
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .meta { color: var(--text-muted); font-size: 13px; margin-bottom: 20px; }
+
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 28px;
+  }
+  .tile {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .tile .label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 6px;
+  }
+  .tile .value {
+    font-size: 22px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .tile .value.market-open { color: var(--good); }
+  .tile .value.market-closed { color: var(--text-muted); }
+
+  h2 { font-size: 15px; margin: 0 0 12px; color: var(--text-secondary); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 28px;
+    font-size: 13px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--gridline);
+    vertical-align: top;
+  }
+  th {
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  tr:last-child td { border-bottom: none; }
+  td.num, th.num { font-variant-numeric: tabular-nums; text-align: right; }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+  .badge.buy  { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+  .badge.sell { background: color-mix(in srgb, var(--critical) 18%, transparent); color: var(--critical); }
+  .badge.hold { background: var(--hold-bg); color: var(--hold-text); }
+
+  .reason { color: var(--text-muted); font-size: 12px; }
+  .delta-good { color: var(--delta-good); font-weight: 600; }
+  .delta-bad { color: var(--delta-bad); font-weight: 600; }
+  .empty-state { color: var(--text-muted); text-align: center; padding: 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="disclaimer">
+    <span class="icon">&#9888;&#65039;</span>
+    <div>
+      <strong>Paper trading account &mdash; not financial advice.</strong>
+      <span class="body">Every strategy shown here is a simple, unbacktested baseline (SMA crossover, RSI, Donchian breakout). Signals reflect what the bot itself is doing with simulated money, not a recommendation for you or anyone else to buy or sell anything.</span>
+    </div>
+  </div>
+
+  <h1>Trading Bot Dashboard</h1>
+  <div class="meta">Paper trading &middot; updated {{ generated_at }}</div>
+
+  <div class="tiles">
+    <div class="tile">
+      <div class="label">Equity</div>
+      <div class="value">${{ "%.2f"|format(equity) }}</div>
+    </div>
+    <div class="tile">
+      <div class="label">Cash</div>
+      <div class="value">${{ "%.2f"|format(cash) }}</div>
+    </div>
+    <div class="tile">
+      <div class="label">Exposure</div>
+      <div class="value">{{ "%.1f"|format(exposure_pct * 100) }}%</div>
+    </div>
+    <div class="tile">
+      <div class="label">Equity Market</div>
+      <div class="value {{ 'market-open' if market_open else 'market-closed' }}">{{ 'Open' if market_open else 'Closed' }}</div>
+    </div>
+  </div>
+
+  <h2>Instruments</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Symbol</th>
+        <th>Strategy</th>
+        <th>Signal</th>
+        <th>Price</th>
+        <th>Position</th>
+        <th class="num">Unrealized P&amp;L</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td><strong>{{ row.symbol }}</strong></td>
+        <td>{{ row.strategy }}</td>
+        <td>
+          <span class="badge {{ row.signal.action }}">{{ row.signal.action }}</span>
+          <div class="reason">{{ row.signal.reason }}</div>
+        </td>
+        <td class="num">{{ "$%.2f"|format(row.signal.price) if row.signal.price is not none else "&mdash;" }}</td>
+        {% if row.position %}
+        <td>{{ "%.4f"|format(row.position.qty) }} @ ${{ "%.2f"|format(row.position.avg_entry_price) }}</td>
+        <td class="num {{ 'delta-good' if row.position.unrealized_pl >= 0 else 'delta-bad' }}">
+          {{ '+' if row.position.unrealized_pl >= 0 else '' }}${{ "%.2f"|format(row.position.unrealized_pl) }}
+        </td>
+        {% else %}
+        <td class="reason">no position</td>
+        <td class="num reason">&mdash;</td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Recent Orders</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Submitted</th>
+        <th>Symbol</th>
+        <th>Side</th>
+        <th class="num">Qty</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if orders %}
+        {% for order in orders %}
+        <tr>
+          <td>{{ order.submitted_at }}</td>
+          <td><strong>{{ order.symbol }}</strong></td>
+          <td>{{ order.side.value if order.side is defined and order.side else order.side }}</td>
+          <td class="num">{{ order.qty }}</td>
+          <td>{{ order.status.value if order.status is defined and order.status else order.status }}</td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr><td colspan="5" class="empty-state">No orders placed yet.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+
+</div>
+</body>
+</html>
