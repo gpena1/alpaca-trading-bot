@@ -19,6 +19,15 @@ if not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
         "Copy .env.example to .env and fill in your Alpaca credentials."
     )
 
+# Optional: separate paper sub-accounts for the Portfolio Architecture's
+# Growth and Aggressive tiers (dashboard display only, never traded against).
+# Left blank, the corresponding tier just shows as "not connected" -- this
+# never gates startup the way the primary credentials above do.
+ALPACA_GROWTH_API_KEY = os.getenv("ALPACA_GROWTH_API_KEY", "")
+ALPACA_GROWTH_SECRET_KEY = os.getenv("ALPACA_GROWTH_SECRET_KEY", "")
+ALPACA_AGGRESSIVE_API_KEY = os.getenv("ALPACA_AGGRESSIVE_API_KEY", "")
+ALPACA_AGGRESSIVE_SECRET_KEY = os.getenv("ALPACA_AGGRESSIVE_SECRET_KEY", "")
+
 if not IS_PAPER and not CONFIRM_LIVE_TRADING:
     sys.exit(
         "ALPACA_BASE_URL points at a non-paper endpoint but CONFIRM_LIVE_TRADING "
@@ -49,10 +58,26 @@ TREND_FAST_SMA = 20
 TREND_SLOW_SMA = 50
 
 MEAN_REVERSION_RSI_PERIOD = 14
-MEAN_REVERSION_OVERSOLD = 30
-MEAN_REVERSION_OVERBOUGHT = 70
+# Backtested 2026-07-14 over a 6-month window: RSI 20/80 beat the original
+# 30/70 for both GLD (Sharpe -0.48 -> +0.71) and USO (Sharpe 5.33 -> 7.17)
+# with no tradeoff between the two -- see bot/backtest.py.
+MEAN_REVERSION_OVERSOLD = 20
+MEAN_REVERSION_OVERBOUGHT = 80
 
-BREAKOUT_LOOKBACK = 20  # Donchian channel window
+# Backtested 2026-07-14: 20-bar (5hr) channel on BTC/USD's 15-min bars was
+# pure noise -- 180 trades, 26% win rate, Sharpe -3.95. 80-bar is the local
+# optimum across the full range tested (20-250): Sharpe improves to -0.94,
+# max drawdown 12.8% -> 4.2%. Still net negative -- longer lookback reduces
+# whipsaw losses but can't fix a long-only strategy trading through a real
+# downtrend. See bot/backtest.py.
+BREAKOUT_LOOKBACK = 80
+# Swept lookback x trend-filter-period jointly (2026-07-14): (80, 150) is the
+# best combination found, Sharpe -0.94 -> -0.75. The filter barely narrows
+# trade count (50 -> 48) since an 80-bar breakout is usually already above a
+# 100-250-bar trend SMA by the time it fires -- breakout and trend correlate
+# at this lookback, so the filter can't add much selectivity. Still net
+# negative; see bot/backtest.py and the conversation this was tuned in.
+BREAKOUT_TREND_FILTER_PERIOD = 150
 
 # --- Data / loop settings ---
 BAR_TIMEFRAME_MINUTES = 15
@@ -65,5 +90,12 @@ MAX_ALLOCATION_PCT_PER_SYMBOL = 0.20  # cap on (position value / account equity)
 STOP_LOSS_PCT = 0.05  # exit if price falls 5% below entry
 TAKE_PROFIT_PCT = 0.10  # exit if price rises 10% above entry
 MAX_TOTAL_EXPOSURE_PCT = 0.90  # cap on (sum of all positions / account equity)
+
+# --- Portfolio Architecture: Growth/Aggressive DCA-ladder tiers ---
+# Each tier holds 10+ symbols (vs Conservative's 5), so the per-symbol cap
+# is much smaller to avoid one ticker dominating the account. No stop-loss/
+# take-profit here -- those would fight the DCA-the-dip logic directly.
+DCA_MAX_ALLOCATION_PCT_PER_SYMBOL = 0.08
+DCA_MAX_TOTAL_EXPOSURE_PCT = 0.90
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

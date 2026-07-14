@@ -10,8 +10,18 @@ import time
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+import pandas as pd
+
 import config
 from bot.broker import Broker
+from bot.dca import (
+    DCA_LEVELS,
+    OPTIONS_LAYER,
+    TIERS,
+    WATCHLIST_CATEGORIES,
+    compute_dca_status,
+    traded_instruments_for_tier,
+)
 from bot.main import build_strategies
 from bot.portfolio import Portfolio
 
@@ -38,9 +48,35 @@ _broker = Broker()
 _portfolio = Portfolio(_broker)
 _strategies = build_strategies()
 
+# Portfolio Architecture: Growth/Aggressive tiers are separate paper
+# sub-accounts. None if their env vars aren't set -- the tier just shows as
+# "not connected" rather than failing the whole dashboard.
+_growth_broker = (
+    Broker(config.ALPACA_GROWTH_API_KEY, config.ALPACA_GROWTH_SECRET_KEY)
+    if config.ALPACA_GROWTH_API_KEY and config.ALPACA_GROWTH_SECRET_KEY
+    else None
+)
+_aggressive_broker = (
+    Broker(config.ALPACA_AGGRESSIVE_API_KEY, config.ALPACA_AGGRESSIVE_SECRET_KEY)
+    if config.ALPACA_AGGRESSIVE_API_KEY and config.ALPACA_AGGRESSIVE_SECRET_KEY
+    else None
+)
+_growth_portfolio = Portfolio(_growth_broker) if _growth_broker else None
+_aggressive_portfolio = Portfolio(_aggressive_broker) if _aggressive_broker else None
+
+TIER_BROKERS = {"conservative": _broker, "growth": _growth_broker, "aggressive": _aggressive_broker}
+TIER_PORTFOLIOS = {"conservative": _portfolio, "growth": _growth_portfolio, "aggressive": _aggressive_portfolio}
+
 _CACHE_TTL_SECONDS = 45
 _lock = threading.Lock()
-_cache = {"data": None, "expires_at": 0.0}
+_cache = {}  # tier_key -> {"data":..., "expires_at":...}
+
+# Weekly bars for the ~24-symbol watchlist are expensive to fetch and barely
+# move within a single day, so they get a much longer-lived cache than the
+# rest of the (45s) dashboard payload.
+_WATCHLIST_CACHE_TTL_SECONDS = 900
+_watchlist_lock = threading.Lock()
+_watchlist_cache = {"data": None, "expires_at": 0.0}
 
 
 _SPARKLINE_WIDTH = 100
@@ -49,6 +85,8 @@ _SPARKLINE_BARS = 30
 
 
 def _sparkline_from_bars(bars):
+    if bars is None or bars.empty:
+        return None
     closes = bars["close"].tail(_SPARKLINE_BARS).tolist()
     if len(closes) < 2:
         return None
@@ -89,9 +127,9 @@ _CHART_HEIGHT = 220
 _CHART_PAD_Y = 16
 
 
-def _compute_equity_chart():
+def _compute_equity_chart(broker):
     try:
-        history = _broker.get_portfolio_history(period="1D", timeframe="15Min")
+        history = broker.get_portfolio_history(period="1D", timeframe="15Min")
     except Exception:
         logger.exception("failed to fetch portfolio history")
         return None
@@ -153,7 +191,7 @@ def _compute_equity_chart():
 _PERFORMANCE_WINDOW_DAYS = 7
 
 
-def _compute_transactions():
+def _compute_transactions(broker):
     """Single source of truth for both the performance summary tiles and the
     full transaction history table -- one fetch, one chronological pairing
     walk, so the two sections can never disagree with each other."""
@@ -167,7 +205,7 @@ def _compute_transactions():
         "window_days": _PERFORMANCE_WINDOW_DAYS,
     }
     try:
-        orders = _broker.get_filled_orders_since(days=_PERFORMANCE_WINDOW_DAYS)
+        orders = broker.get_filled_orders_since(days=_PERFORMANCE_WINDOW_DAYS)
     except Exception:
         logger.exception("failed to fetch filled orders for transaction history")
         return empty
@@ -222,39 +260,198 @@ def _compute_transactions():
     }
 
 
-def _compute():
+def _tier_account(broker):
+    if broker is None:
+        return {"connected": False, "equity": None, "cash": None}
+    try:
+        account = broker.get_account()
+        return {"connected": True, "equity": float(account.equity), "cash": float(account.cash)}
+    except Exception:
+        logger.exception("failed to fetch Portfolio Architecture tier account")
+        return {"connected": False, "equity": None, "cash": None}
+
+
+def _compute_tiers():
+    accounts = {
+        "aggressive": _tier_account(_aggressive_broker),
+        "growth": _tier_account(_growth_broker),
+        "conservative": {"connected": True, "equity": _portfolio.equity(), "cash": _portfolio.cash()},
+    }
+    return [{**tier, "account": accounts[tier["key"]]} for tier in TIERS]
+
+
+_ARMED_LABELS = {
+    0: "Above Level 1",
+    1: "Level 1 armed",
+    2: "Level 2 armed",
+    3: "Level 3 armed",
+    4: "Level 4 — max add",
+}
+_ARMED_CLASSES = {
+    0: "dca-none",
+    1: "dca-armed",
+    2: "dca-armed",
+    3: "dca-ready",
+    4: "dca-ready",
+}
+_DCA_BADGE_TEXT = {0: "above L1", 1: "L1 armed", 2: "L2 armed", 3: "L3 armed", 4: "L4 max"}
+
+
+def _compute_watchlist():
+    categories = []
+    for cat in WATCHLIST_CATEGORIES:
+        instruments = []
+        for inst in cat["instruments"]:
+            try:
+                bars = _broker.get_weekly_bars(inst["symbol"], crypto=inst["crypto"])
+                status = compute_dca_status(bars)
+            except Exception:
+                logger.exception("%s: failed to fetch weekly bars for DCA status", inst["symbol"])
+                status = compute_dca_status(pd.DataFrame())
+            if status.error:
+                status_label, status_class = "No data", "dca-none"
+            else:
+                status_label = _ARMED_LABELS[status.armed_level]
+                status_class = _ARMED_CLASSES[status.armed_level]
+            instruments.append(
+                {**inst, "status": status, "status_label": status_label, "status_class": status_class}
+            )
+        categories.append({**cat, "instruments": instruments})
+    return categories
+
+
+def get_watchlist_data():
+    with _watchlist_lock:
+        now = time.time()
+        if _watchlist_cache["data"] is None or now >= _watchlist_cache["expires_at"]:
+            _watchlist_cache["data"] = _compute_watchlist()
+            _watchlist_cache["expires_at"] = now + _WATCHLIST_CACHE_TTL_SECONDS
+        return _watchlist_cache["data"]
+
+
+def _conservative_rows():
     rows = []
     for symbol in config.SYMBOLS:
         try:
             sig = _signal_for(symbol)
         except Exception:
             logger.exception("%s: signal computation failed", symbol)
-            sig = {"action": "hold", "reason": "error fetching data", "price": None}
+            sig = {"action": "hold", "reason": "error fetching data", "price": None, "sparkline": None}
         rows.append(
             {
                 "symbol": symbol,
-                "strategy": _strategies[symbol].name,
-                "signal": sig,
+                "category": _strategies[symbol].name,
                 "position": _portfolio.position_for(symbol),
+                "badge_class": sig["action"],
+                "badge_text": sig["action"],
+                "reason": sig["reason"],
+                "price": sig["price"],
+                "sparkline": sig["sparkline"],
             }
         )
+    return rows
+
+
+def _dca_rows(tier_key, broker, portfolio):
+    rows = []
+    for inst in traded_instruments_for_tier(tier_key):
+        symbol, crypto, label = inst["symbol"], inst["crypto"], inst["label"]
+        bars = pd.DataFrame()
+        try:
+            bars = broker.get_weekly_bars(symbol, crypto=crypto)
+            status = compute_dca_status(bars)
+        except Exception:
+            logger.exception("%s [%s]: failed to compute DCA row", symbol, tier_key)
+            status = compute_dca_status(pd.DataFrame())
+
+        if status.error:
+            badge_class, badge_text, reason = "dca-none", "no data", "price data unavailable"
+        else:
+            badge_class = _ARMED_CLASSES[status.armed_level]
+            badge_text = _DCA_BADGE_TEXT[status.armed_level]
+            reason = (
+                f"{status.pct_from_level1:+.1f}% vs Level 1 (${status.level1:.2f})"
+                if status.pct_from_level1 is not None
+                else "insufficient weekly history"
+            )
+
+        rows.append(
+            {
+                "symbol": symbol,
+                "category": label,
+                "position": portfolio.position_for(symbol),
+                "badge_class": badge_class,
+                "badge_text": badge_text,
+                "reason": reason,
+                "price": status.price,
+                "sparkline": _sparkline_from_bars(bars),
+            }
+        )
+    return rows
+
+
+_TIER_INSTRUMENTS_LABEL = {"conservative": "Strategy", "growth": "Category", "aggressive": "Category"}
+
+
+def _compute_for_tier(tier_key):
+    if tier_key == "conservative":
+        broker, portfolio = _broker, _portfolio
+        rows = _conservative_rows()
+    else:
+        broker = TIER_BROKERS.get(tier_key)
+        portfolio = TIER_PORTFOLIOS.get(tier_key)
+        if broker is None or portfolio is None:
+            return {"connected": False, "tier": tier_key}
+        rows = _dca_rows(tier_key, broker, portfolio)
+
+    equity = portfolio.equity()
+    chart = _compute_equity_chart(broker)
+    if chart and equity > 0 and abs(chart["end_equity"] - equity) / equity > 0.05:
+        # Seen in practice on the Growth/Aggressive accounts: Alpaca's
+        # portfolio_history endpoint reporting a flat 2x-inflated equity
+        # series that doesn't match the account's real, authoritative
+        # equity from get_account(). Rather than show a chart known to be
+        # wrong, drop it -- the template's existing "not enough history"
+        # empty state covers this gracefully.
+        logger.warning(
+            "%s: discarding equity chart, last point $%.2f disagrees with account equity $%.2f",
+            tier_key,
+            chart["end_equity"],
+            equity,
+        )
+        chart = None
 
     return {
+        "connected": True,
+        "tier": tier_key,
+        "instruments_label": _TIER_INSTRUMENTS_LABEL[tier_key],
         "generated_at": _fmt_chicago(datetime.now(timezone.utc), fmt="%b %-d, %Y %-I:%M:%S %p"),
-        "market_open": _broker.is_market_open(),
-        "equity": _portfolio.equity(),
-        "cash": _portfolio.cash(),
-        "exposure_pct": _portfolio.exposure_pct(),
+        "market_open": broker.is_market_open(),
+        "equity": equity,
+        "cash": portfolio.cash(),
+        "exposure_pct": portfolio.exposure_pct(),
         "rows": rows,
-        "chart": _compute_equity_chart(),
-        "performance": _compute_transactions(),
+        "chart": chart,
+        "performance": _compute_transactions(broker),
     }
 
 
-def get_dashboard_data():
+def _build_payload(tier_key):
+    payload = _compute_for_tier(tier_key)
+    payload["tiers"] = _compute_tiers()
+    payload["watchlist"] = get_watchlist_data()
+    payload["dca_levels"] = DCA_LEVELS
+    payload["options_layer"] = OPTIONS_LAYER
+    return payload
+
+
+def get_dashboard_data(tier_key="conservative"):
+    if tier_key not in TIER_BROKERS:
+        tier_key = "conservative"
     with _lock:
         now = time.time()
-        if _cache["data"] is None or now >= _cache["expires_at"]:
-            _cache["data"] = _compute()
-            _cache["expires_at"] = now + _CACHE_TTL_SECONDS
-        return _cache["data"]
+        entry = _cache.get(tier_key)
+        if entry is None or now >= entry["expires_at"]:
+            entry = {"data": _build_payload(tier_key), "expires_at": now + _CACHE_TTL_SECONDS}
+            _cache[tier_key] = entry
+        return entry["data"]
