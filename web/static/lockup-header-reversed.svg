@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 56" width="280" height="56" role="img" aria-label="Sopena Investments">
+  <title>Sopena Investments</title>
+  <g transform="translate(0, 4)">
+    <g fill="none" stroke-width="4.9" transform="translate(24,24)">
+      <path d="M 13.50 0.00 A 13.5 13.5 0 0 0 9.55 -9.55" stroke="#F4F2EC"/>
+      <path d="M 6.75 -11.69 A 13.5 13.5 0 0 0 1.18 -13.45" stroke="#F4F2EC"/>
+      <path d="M -6.75 -11.69 A 13.5 13.5 0 0 0 -11.69 -6.75" stroke="#B3A68F"/>
+      <path d="M -13.50 0.00 A 13.5 13.5 0 0 0 -9.55 9.55" stroke="#F4F2EC"/>
+      <path d="M -6.75 11.69 A 13.5 13.5 0 0 0 -1.18 13.45" stroke="#F4F2EC"/>
+      <path d="M 6.75 11.69 A 13.5 13.5 0 0 0 11.69 6.75" stroke="#F4F2EC"/>
+    </g>
+  </g>
+  <text x="64" y="28" font-family="Georgia, 'Times New Roman', serif" font-size="19"
+        letter-spacing="5.5" fill="#F4F2EC">SOPENA</text>
+  <text x="66" y="43" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="8"
+        font-weight="600" letter-spacing="3" fill="#B3A68F">INVESTMENTS</text>
+</svg>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>Sopena</title>
+  <path d="M 50.00 32.00 A 18 18 0 0 0 44.73 19.27" fill="none" stroke="#4A5A50" stroke-width="6.5"/>
+  <path d="M 41.00 16.41 A 18 18 0 0 0 27.34 14.61" fill="none" stroke="#4A5A50" stroke-width="6.5"/>
+  <path d="M 23.00 16.41 A 18 18 0 0 0 14.61 27.34" fill="none" stroke="#4A5A50" stroke-width="6.5"/>
+  <path d="M 14.00 32.00 A 18 18 0 0 0 19.27 44.73" fill="none" stroke="#4A5A50" stroke-width="6.5"/>
+  <path d="M 23.00 47.59 A 18 18 0 0 0 36.66 49.39" fill="none" stroke="#B3A68F" stroke-width="6.5"/>
+  <path d="M 41.00 47.59 A 18 18 0 0 0 49.39 36.66" fill="none" stroke="#4A5A50" stroke-width="6.5"/>
+</svg>

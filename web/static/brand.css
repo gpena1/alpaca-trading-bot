@@ -1,0 +1,160 @@
+/* ============================================================
+   SOPENA — brand.css
+   Sage & Linen system. Import once, use the tokens everywhere.
+   Do not introduce colors outside this palette.
+   ============================================================ */
+
+:root {
+  /* Palette — five colors, that's all */
+  --sopena-sage-ink:  #4A5A50;  /* text, marks, primary surfaces */
+  --sopena-sage:      #7C8F80;  /* secondary text, muted UI */
+  --sopena-taupe:     #B3A68F;  /* the single accent */
+  --sopena-linen:     #D8D2C2;  /* dividers, fills, table rules */
+  --sopena-paper:     #F4F2EC;  /* page background */
+  --sopena-white:     #FFFFFF;  /* card surfaces */
+
+  /* Arm accent — Investments */
+  --sopena-slate:     #68767C;
+
+  /* Semantic (for the dashboard's P&L, kept inside the family) */
+  --sopena-gain:      #4C6455;  /* deep sage — up */
+  --sopena-loss:      #8F6255;  /* muted brick — down, not alarm red */
+  --sopena-muted:     #8A8578;
+
+  /* Type */
+  --sopena-serif: Georgia, 'Times New Roman', serif;
+  --sopena-sans:  'Helvetica Neue', Helvetica, Arial, sans-serif;
+
+  /* The wordmark's defining property: wide tracking. Never tighten it. */
+  --sopena-tracking: 0.30em;
+}
+
+/* ---------- WORDMARK ----------
+   Use anywhere the name appears as a brand element (not body copy). */
+.sopena-wordmark {
+  font-family: var(--sopena-serif);
+  font-weight: 400;
+  letter-spacing: var(--sopena-tracking);
+  color: var(--sopena-sage-ink);
+  text-transform: uppercase;
+  /* tracking adds space after the final letter; pull it back */
+  margin-right: calc(-1 * var(--sopena-tracking));
+  white-space: nowrap;
+}
+.sopena-wordmark--light { color: var(--sopena-paper); }
+
+/* ---------- DESCRIPTOR (the arm name) ---------- */
+.sopena-descriptor {
+  font-family: var(--sopena-sans);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--sopena-slate);
+}
+
+/* ---------- LOCKUP (mark + wordmark) ---------- */
+.sopena-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.9rem;
+  text-decoration: none;
+}
+.sopena-lockup__mark { width: 40px; height: 40px; flex: 0 0 auto; }
+.sopena-lockup__text { display: flex; flex-direction: column; gap: 2px; }
+.sopena-lockup__text .sopena-wordmark { font-size: 1.15rem; line-height: 1; }
+
+/* ---------- LEDGER RULES ----------
+   The two offset bars from the wordmark concept. Use above page titles
+   and section headers — this is the motif that ties pages together. */
+.sopena-rules { display: block; margin-bottom: 1rem; }
+.sopena-rules::before,
+.sopena-rules::after {
+  content: '';
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+}
+.sopena-rules::before { width: 56px; background: var(--sopena-sage-ink); margin-bottom: 4px; }
+.sopena-rules::after  { width: 34px; background: var(--sopena-taupe); }
+
+/* ---------- HEADER ---------- */
+.sopena-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.75rem;
+  background: var(--sopena-white);
+  border-bottom: 1px solid var(--sopena-linen);
+}
+.sopena-header--dark {
+  background: var(--sopena-sage-ink);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.sopena-header__meta {
+  font-family: var(--sopena-sans);
+  font-size: 0.75rem;
+  color: var(--sopena-muted);
+  letter-spacing: 0.05em;
+}
+
+/* ---------- FOOTER ---------- */
+.sopena-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 1.25rem 1.75rem;
+  border-top: 1px solid var(--sopena-linen);
+  font-family: var(--sopena-sans);
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  color: var(--sopena-muted);
+  text-transform: uppercase;
+}
+.sopena-footer .sopena-wordmark { font-size: 0.8rem; }
+
+/* ---------- LOADING / EMPTY STATE ----------
+   The mark rotating. Costs nothing, and the brand shows up in a place
+   most dashboards leave generic. */
+@keyframes sopena-spin { to { transform: rotate(360deg); } }
+.sopena-spinner { width: 40px; height: 40px; animation: sopena-spin 1.6s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .sopena-spinner { animation: none; }
+}
+
+/* ---------- CARDS / PANELS ---------- */
+.sopena-card {
+  background: var(--sopena-white);
+  border: 1px solid var(--sopena-linen);
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+}
+.sopena-card__label {
+  font-family: var(--sopena-sans);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--sopena-muted);
+  margin-bottom: 0.5rem;
+}
+.sopena-card__value {
+  font-family: var(--sopena-serif);
+  font-size: 1.9rem;
+  color: var(--sopena-sage-ink);
+}
+
+/* ---------- PAGE TITLES ---------- */
+.sopena-title {
+  font-family: var(--sopena-serif);
+  font-weight: 400;
+  font-size: 1.75rem;
+  color: var(--sopena-sage-ink);
+  margin: 0;
+}
+
+body.sopena {
+  background: var(--sopena-paper);
+  color: var(--sopena-sage-ink);
+  font-family: var(--sopena-sans);
+}

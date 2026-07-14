@@ -1,11 +1,11 @@
 {
-  "name": "Trading Bot Dashboard",
-  "short_name": "Trading Bot",
+  "name": "Sopena Trading Dashboard",
+  "short_name": "Sopena",
   "icons": [
-    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png" }
+    { "src": "/static/favicon-192x192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/static/favicon-512x512.png", "sizes": "512x512", "type": "image/png" }
   ],
-  "theme_color": "#0d0d0d",
-  "background_color": "#0d0d0d",
+  "theme_color": "#4A5A50",
+  "background_color": "#F4F2EC",
   "display": "standalone"
 }

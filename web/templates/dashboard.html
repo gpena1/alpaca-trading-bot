@@ -3,77 +3,43 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Trading Bot Dashboard</title>
-<link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
-<link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+<title>Sopena &mdash; Trading Bot Dashboard</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" sizes="any">
+<link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
 <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}">
-<meta name="theme-color" content="#0d0d0d">
+<meta name="theme-color" content="#4A5A50">
+<link rel="stylesheet" href="{{ url_for('static', filename='brand.css') }}">
 <style>
   :root {
-    --surface-1:      #fcfcfb;
-    --page-plane:      #f9f9f7;
-    --text-primary:   #0b0b0b;
-    --text-secondary: #52514e;
-    --text-muted:      #898781;
-    --gridline:        #e1e0d9;
-    --border:          rgba(11,11,11,0.10);
-    --good:            #0ca30c;
-    --critical:        #d03b3b;
-    --warning:         #fab219;
-    --warning-bg:      #fff6e0;
-    --delta-good:      #006300;
-    --delta-bad:       #d03b3b;
-    --hold-bg:         #eeede8;
-    --hold-text:       #52514e;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --surface-1:      #1a1a19;
-      --page-plane:      #0d0d0d;
-      --text-primary:   #ffffff;
-      --text-secondary: #c3c2b7;
-      --text-muted:      #898781;
-      --gridline:        #2c2c2a;
-      --border:          rgba(255,255,255,0.10);
-      --good:            #0ca30c;
-      --critical:        #e66767;
-      --warning:         #c98500;
-      --warning-bg:      #2b2410;
-      --delta-good:      #0ca30c;
-      --delta-bad:       #e66767;
-      --hold-bg:         #2c2c2a;
-      --hold-text:       #c3c2b7;
-    }
+    /* Local aliases onto the Sopena tokens -- keeps the template's existing
+       var(--good)/var(--critical) references working without a rewrite. */
+    --good:      var(--sopena-gain);
+    --critical:  var(--sopena-loss);
+    --hold-bg:   var(--sopena-linen);
+    --hold-text: var(--sopena-sage-ink);
   }
   * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--page-plane);
-    color: var(--text-primary);
-    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-    -webkit-font-smoothing: antialiased;
-  }
+  body { margin: 0; -webkit-font-smoothing: antialiased; }
   .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 20px 60px; }
 
   .disclaimer {
     display: flex;
     gap: 12px;
     align-items: flex-start;
-    background: var(--warning-bg);
-    border: 1px solid var(--warning);
-    border-radius: 10px;
+    background: var(--sopena-white);
+    border: 1px solid var(--sopena-linen);
+    border-left: 3px solid var(--sopena-taupe);
+    border-radius: 6px;
     padding: 14px 16px;
     margin-bottom: 24px;
     font-size: 14px;
-    line-height: 1.5;
+    line-height: 1.55;
   }
-  .disclaimer .icon { font-size: 18px; line-height: 1; }
-  .disclaimer strong { color: var(--text-primary); }
-  .disclaimer span.body { color: var(--text-secondary); }
+  .disclaimer strong { color: var(--sopena-sage-ink); }
+  .disclaimer span.body { color: var(--sopena-sage); }
 
-  h1 { font-size: 20px; margin: 0 0 4px; }
-  .meta { color: var(--text-muted); font-size: 13px; margin-bottom: 20px; }
+  .meta { color: var(--sopena-muted); font-size: 13px; margin-bottom: 20px; }
 
   .tiles {
     display: grid;
@@ -81,34 +47,28 @@
     gap: 12px;
     margin-bottom: 28px;
   }
-  .tile {
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 14px 16px;
-  }
   .tile .label {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--sopena-muted);
     text-transform: uppercase;
     letter-spacing: 0.03em;
     margin-bottom: 6px;
   }
   .tile .value {
+    font-family: var(--sopena-serif);
     font-size: 22px;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
+    color: var(--sopena-sage-ink);
   }
-  .tile .value.market-open { color: var(--good); }
-  .tile .value.market-closed { color: var(--text-muted); }
+  .tile .value.market-open { color: var(--sopena-gain); }
+  .tile .value.market-closed { color: var(--sopena-muted); }
 
-  h2 { font-size: 15px; margin: 0 0 12px; color: var(--text-secondary); }
+  h2 { font-size: 15px; margin: 0 0 12px; color: var(--sopena-slate); font-weight: 600; }
   table {
     width: 100%;
     border-collapse: collapse;
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: 10px;
+    background: var(--sopena-white);
+    border: 1px solid var(--sopena-linen);
+    border-radius: 8px;
     overflow: hidden;
     margin-bottom: 28px;
     font-size: 13px;
@@ -116,11 +76,11 @@
   th, td {
     text-align: left;
     padding: 10px 12px;
-    border-bottom: 1px solid var(--gridline);
+    border-bottom: 1px solid var(--sopena-linen);
     vertical-align: top;
   }
   th {
-    color: var(--text-muted);
+    color: var(--sopena-muted);
     font-weight: 600;
     font-size: 11px;
     text-transform: uppercase;
@@ -138,43 +98,40 @@
     text-transform: uppercase;
     letter-spacing: 0.02em;
   }
-  .badge.buy  { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
-  .badge.sell { background: color-mix(in srgb, var(--critical) 18%, transparent); color: var(--critical); }
+  .badge.buy  { background: color-mix(in srgb, var(--sopena-gain) 18%, transparent); color: var(--sopena-gain); }
+  .badge.sell { background: color-mix(in srgb, var(--sopena-loss) 18%, transparent); color: var(--sopena-loss); }
   .badge.hold { background: var(--hold-bg); color: var(--hold-text); }
 
-  .reason { color: var(--text-muted); font-size: 12px; }
-  .delta-good { color: var(--delta-good); font-weight: 600; }
-  .delta-bad { color: var(--delta-bad); font-weight: 600; }
-  .empty-state { color: var(--text-muted); text-align: center; padding: 24px; }
+  .reason { color: var(--sopena-muted); font-size: 12px; }
+  .delta-good { color: var(--sopena-gain); font-weight: 600; }
+  .delta-bad { color: var(--sopena-loss); font-weight: 600; }
+  .empty-state { color: var(--sopena-muted); text-align: center; padding: 24px; }
 
   .chart-card {
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: 10px;
     padding: 18px 18px 8px;
     margin-bottom: 24px;
   }
   .chart-card .hero-label {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--sopena-muted);
     text-transform: uppercase;
     letter-spacing: 0.03em;
     margin-bottom: 4px;
   }
   .chart-card .hero-value {
+    font-family: var(--sopena-serif);
     font-size: 36px;
-    font-weight: 600;
-    font-variant-numeric: normal;
+    color: var(--sopena-sage-ink);
     margin-bottom: 2px;
   }
   .chart-card .hero-delta { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
   .chart-wrap { position: relative; width: 100%; }
   .chart-wrap svg { display: block; width: 100%; height: auto; overflow: visible; }
   .chart-line { fill: none; stroke-width: 2px; stroke-linejoin: round; stroke-linecap: round; }
-  .chart-area { opacity: 0.10; }
+  .chart-area { opacity: 0.12; }
   .chart-end-dot { stroke-width: 2px; }
   .chart-crosshair {
-    stroke: var(--text-muted);
+    stroke: var(--sopena-muted);
     stroke-width: 1px;
     opacity: 0;
     pointer-events: none;
@@ -189,8 +146,8 @@
     top: 0;
     left: 0;
     transform: translate(-50%, -115%);
-    background: var(--text-primary);
-    color: var(--page-plane);
+    background: var(--sopena-sage-ink);
+    color: var(--sopena-paper);
     font-size: 12px;
     padding: 6px 9px;
     border-radius: 6px;
@@ -200,7 +157,7 @@
     transition: opacity 0.08s ease;
   }
   .chart-tooltip .val { font-weight: 700; }
-  .chart-tooltip .time { color: var(--text-muted); margin-top: 1px; }
+  .chart-tooltip .time { color: var(--sopena-linen); margin-top: 1px; }
 
   .sparkline { display: block; width: 90px; height: 26px; }
   .sparkline polyline { fill: none; stroke-width: 1.5px; stroke-linejoin: round; stroke-linecap: round; }
@@ -213,24 +170,43 @@
   }
 </style>
 </head>
-<body>
+<body class="sopena">
+<header class="sopena-header">
+  <a class="sopena-lockup" href="/">
+    <svg class="sopena-lockup__mark" viewBox="0 0 64 64">
+      <rect width="64" height="64" rx="14" fill="#4A5A50"/>
+      <g fill="none" stroke-width="6.5" transform="translate(32,32)">
+        <path d="M 18 0 A 18 18 0 0 0 12.73 -12.73" stroke="#F4F2EC"/>
+        <path d="M 9 -15.59 A 18 18 0 0 0 1.57 -17.93" stroke="#F4F2EC"/>
+        <path d="M -9 -15.59 A 18 18 0 0 0 -15.59 -9" stroke="#B3A68F"/>
+        <path d="M -18 0 A 18 18 0 0 0 -12.73 12.73" stroke="#F4F2EC"/>
+        <path d="M -9 15.59 A 18 18 0 0 0 -1.57 17.93" stroke="#F4F2EC"/>
+        <path d="M 9 15.59 A 18 18 0 0 0 15.59 9" stroke="#F4F2EC"/>
+      </g>
+    </svg>
+    <span class="sopena-lockup__text">
+      <span class="sopena-wordmark">Sopena</span>
+      <span class="sopena-descriptor">Investments</span>
+    </span>
+  </a>
+</header>
 <div class="wrap">
 
   <div class="disclaimer">
-    <span class="icon">&#9888;&#65039;</span>
     <div>
       <strong>Paper trading account &mdash; not financial advice.</strong>
       <span class="body">Every strategy shown here is a simple, unbacktested baseline (SMA crossover, RSI, Donchian breakout). Signals reflect what the bot itself is doing with simulated money, not a recommendation for you or anyone else to buy or sell anything.</span>
     </div>
   </div>
 
-  <h1>Trading Bot Dashboard</h1>
+  <span class="sopena-rules"></span>
+  <h1 class="sopena-title">Trading Bot Dashboard</h1>
 
   <div id="dashboard-body">
   <div class="meta">Paper trading &middot; updated {{ generated_at }}</div>
 
   {% if chart %}
-  <div class="chart-card">
+  <div class="chart-card sopena-card">
     <div class="hero-label">Equity today</div>
     <div class="hero-value">${{ "%.2f"|format(chart.end_equity) }}</div>
     <div class="hero-delta {{ 'delta-good' if chart.is_up else 'delta-bad' }}">
@@ -242,10 +218,10 @@
         <path class="chart-area" d="{{ chart.area_path }}" fill="{{ 'var(--good)' if chart.is_up else 'var(--critical)' }}"></path>
         <polyline class="chart-line" points="{{ chart.polyline }}" stroke="{{ 'var(--good)' if chart.is_up else 'var(--critical)' }}"></polyline>
         <circle class="chart-end-dot" cx="{{ chart.last_point.x }}" cy="{{ chart.last_point.y }}" r="5"
-                fill="{{ 'var(--good)' if chart.is_up else 'var(--critical)' }}" stroke="var(--surface-1)"></circle>
+                fill="{{ 'var(--good)' if chart.is_up else 'var(--critical)' }}" stroke="var(--sopena-white)"></circle>
         <line class="chart-crosshair" id="equity-chart-crosshair" x1="0" y1="0" x2="0" y2="{{ chart.height }}"></line>
         <circle class="chart-hover-dot" id="equity-chart-hover-dot" r="5"
-                fill="{{ 'var(--good)' if chart.is_up else 'var(--critical)' }}" stroke="var(--surface-1)"></circle>
+                fill="{{ 'var(--good)' if chart.is_up else 'var(--critical)' }}" stroke="var(--sopena-white)"></circle>
       </svg>
       <div class="chart-tooltip" id="equity-chart-tooltip">
         <div class="val"></div>
@@ -255,7 +231,7 @@
   </div>
   <script type="application/json" id="equity-chart-data">{{ {"points": chart.points, "width": chart.width, "height": chart.height} | tojson }}</script>
   {% else %}
-  <div class="chart-card">
+  <div class="chart-card sopena-card">
     <div class="hero-label">Equity today</div>
     <div class="hero-value">${{ "%.2f"|format(equity) }}</div>
     <div class="empty-state">Not enough intraday history yet to chart &mdash; check back once the account has more activity.</div>
@@ -263,19 +239,19 @@
   {% endif %}
 
   <div class="tiles">
-    <div class="tile">
+    <div class="tile sopena-card">
       <div class="label">Equity</div>
       <div class="value">${{ "%.2f"|format(equity) }}</div>
     </div>
-    <div class="tile">
+    <div class="tile sopena-card">
       <div class="label">Cash</div>
       <div class="value">${{ "%.2f"|format(cash) }}</div>
     </div>
-    <div class="tile">
+    <div class="tile sopena-card">
       <div class="label">Exposure</div>
       <div class="value">{{ "%.1f"|format(exposure_pct * 100) }}%</div>
     </div>
-    <div class="tile">
+    <div class="tile sopena-card">
       <div class="label">Equity Market</div>
       <div class="value {{ 'market-open' if market_open else 'market-closed' }}">{{ 'Open' if market_open else 'Closed' }}</div>
     </div>
@@ -330,17 +306,17 @@
 
   <h2>Performance &mdash; last {{ performance.window_days }} days</h2>
   <div class="perf-tiles">
-    <div class="tile">
+    <div class="tile sopena-card">
       <div class="label">Win rate</div>
       <div class="value">{{ ("%.0f"|format(performance.win_rate)) + "%" if performance.win_rate is not none else "—" }}</div>
     </div>
-    <div class="tile">
+    <div class="tile sopena-card">
       <div class="label">Realized P&amp;L</div>
       <div class="value {{ 'delta-good' if performance.total_realized_pnl >= 0 else 'delta-bad' }}">
         {{ '+' if performance.total_realized_pnl >= 0 else '-' }}${{ "%.2f"|format(performance.total_realized_pnl|abs) }}
       </div>
     </div>
-    <div class="tile">
+    <div class="tile sopena-card">
       <div class="label">Closed / open trades</div>
       <div class="value">{{ performance.closed_count }} / {{ performance.open_count }}</div>
     </div>
@@ -381,13 +357,19 @@
     </tbody>
   </table>
   {% else %}
-  <div class="chart-card">
+  <div class="chart-card sopena-card">
     <div class="empty-state">No transactions in the last {{ performance.window_days }} days yet &mdash; this fills in once the bot places its first trade.</div>
   </div>
   {% endif %}
   </div>
 
 </div>
+
+<footer class="sopena-footer">
+  <span class="sopena-wordmark">Sopena</span>
+  <span>&middot; Personal track record &middot; Not investment advice &middot; Data delayed</span>
+</footer>
+
 <script>
   function setupEquityChart() {
     var dataEl = document.getElementById('equity-chart-data');
