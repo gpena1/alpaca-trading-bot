@@ -127,7 +127,7 @@ _CHART_HEIGHT = 220
 _CHART_PAD_Y = 16
 
 
-def _compute_equity_chart(broker):
+def _compute_equity_chart(broker, live_equity):
     try:
         history = broker.get_portfolio_history(period="1D", timeframe="15Min")
     except Exception:
@@ -141,6 +141,19 @@ def _compute_equity_chart(broker):
     ]
     if len(points_raw) < 2:
         return None
+
+    # Observed on the Growth/Aggressive accounts: Alpaca's intraday
+    # portfolio_history sometimes double-counts base_value, offsetting every
+    # point by +base_value (e.g. a $1M account reports a $2M start). Detect
+    # it by comparing the most recent point against the account's live,
+    # authoritative equity -- if they disagree by roughly base_value,
+    # subtract it back out of the whole series. Self-healing if Alpaca fixes
+    # this upstream: the correction just stops triggering.
+    base_value = float(history.base_value) if history.base_value else 0.0
+    if base_value > 0 and live_equity > 0:
+        offset = points_raw[-1][1] - live_equity
+        if abs(offset - base_value) / base_value < 0.05:
+            points_raw = [(ts, eq - base_value) for ts, eq in points_raw]
 
     values = [eq for _, eq in points_raw]
     min_v, max_v = min(values), max(values)
@@ -405,16 +418,14 @@ def _compute_for_tier(tier_key):
         rows = _dca_rows(tier_key, broker, portfolio)
 
     equity = portfolio.equity()
-    chart = _compute_equity_chart(broker)
+    chart = _compute_equity_chart(broker, equity)
     if chart and equity > 0 and abs(chart["end_equity"] - equity) / equity > 0.05:
-        # Seen in practice on the Growth/Aggressive accounts: Alpaca's
-        # portfolio_history endpoint reporting a flat 2x-inflated equity
-        # series that doesn't match the account's real, authoritative
-        # equity from get_account(). Rather than show a chart known to be
-        # wrong, drop it -- the template's existing "not enough history"
-        # empty state covers this gracefully.
+        # Safety net: if the base_value correction above didn't fully
+        # resolve the disagreement (e.g. a different Alpaca data issue),
+        # don't show a chart known to be wrong -- the template's existing
+        # "not enough history" empty state covers this gracefully.
         logger.warning(
-            "%s: discarding equity chart, last point $%.2f disagrees with account equity $%.2f",
+            "%s: discarding equity chart, last point $%.2f still disagrees with account equity $%.2f",
             tier_key,
             chart["end_equity"],
             equity,
