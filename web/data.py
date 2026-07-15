@@ -7,6 +7,7 @@ observes and reports the bot's state, it cannot act on it.
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -68,8 +69,14 @@ TIER_BROKERS = {"conservative": _broker, "growth": _growth_broker, "aggressive":
 TIER_PORTFOLIOS = {"conservative": _portfolio, "growth": _growth_portfolio, "aggressive": _aggressive_portfolio}
 
 _CACHE_TTL_SECONDS = 45
-_lock = threading.Lock()
+# One lock per tier (not a single shared lock) -- rebuilding Growth's cache
+# must never block a concurrent request for Conservative or Aggressive.
+_locks = {tier_key: threading.Lock() for tier_key in ("conservative", "growth", "aggressive")}
 _cache = {}  # tier_key -> {"data":..., "expires_at":...}
+
+# Kept under urllib3's default per-host connection pool size (10) so
+# concurrent fetches don't churn through discarded/recreated connections.
+_FETCH_POOL_WORKERS = 5
 
 # Weekly bars for the ~24-symbol watchlist are expensive to fetch and barely
 # move within a single day, so they get a much longer-lived cache than the
@@ -107,6 +114,19 @@ def _sparkline_from_bars(bars):
         "width": _SPARKLINE_WIDTH,
         "height": _SPARKLINE_HEIGHT,
     }
+
+
+def _parallel_map(fn, items):
+    """Runs fn(item) for every item concurrently (I/O-bound Alpaca calls,
+    one per symbol) instead of sequentially -- this is what actually makes
+    tab switches fast, since a Growth/Aggressive row list means 10-14
+    separate weekly-bar fetches. Order is preserved; a failed item still
+    yields via fn's own try/except, this just doesn't let one slow call
+    block the rest."""
+    if not items:
+        return []
+    with ThreadPoolExecutor(max_workers=min(_FETCH_POOL_WORKERS, len(items))) as pool:
+        return list(pool.map(fn, items))
 
 
 def _signal_for(symbol):
@@ -310,17 +330,25 @@ _ARMED_CLASSES = {
 _DCA_BADGE_TEXT = {0: "above L1", 1: "L1 armed", 2: "L2 armed", 3: "L3 armed", 4: "L4 max"}
 
 
+def _fetch_watchlist_status(inst):
+    try:
+        bars = _broker.get_weekly_bars(inst["symbol"], crypto=inst["crypto"])
+        return compute_dca_status(bars)
+    except Exception:
+        logger.exception("%s: failed to fetch weekly bars for DCA status", inst["symbol"])
+        return compute_dca_status(pd.DataFrame())
+
+
 def _compute_watchlist():
+    all_instruments = [inst for cat in WATCHLIST_CATEGORIES for inst in cat["instruments"]]
+    statuses = _parallel_map(_fetch_watchlist_status, all_instruments)
+    status_by_symbol = dict(zip((inst["symbol"] for inst in all_instruments), statuses))
+
     categories = []
     for cat in WATCHLIST_CATEGORIES:
         instruments = []
         for inst in cat["instruments"]:
-            try:
-                bars = _broker.get_weekly_bars(inst["symbol"], crypto=inst["crypto"])
-                status = compute_dca_status(bars)
-            except Exception:
-                logger.exception("%s: failed to fetch weekly bars for DCA status", inst["symbol"])
-                status = compute_dca_status(pd.DataFrame())
+            status = status_by_symbol[inst["symbol"]]
             if status.error:
                 status_label, status_class = "No data", "dca-none"
             else:
@@ -342,65 +370,70 @@ def get_watchlist_data():
         return _watchlist_cache["data"]
 
 
+def _fetch_conservative_row(symbol):
+    try:
+        sig = _signal_for(symbol)
+    except Exception:
+        logger.exception("%s: signal computation failed", symbol)
+        sig = {"action": "hold", "reason": "error fetching data", "price": None, "sparkline": None}
+    position = _portfolio.position_for(symbol)
+    return {
+        "symbol": symbol,
+        "category": _strategies[symbol].name,
+        "position": position,
+        "badge_class": sig["action"],
+        "badge_text": sig["action"],
+        "reason": sig["reason"],
+        "price": sig["price"],
+        "sparkline": sig["sparkline"],
+    }
+
+
 def _conservative_rows():
-    rows = []
-    for symbol in config.SYMBOLS:
-        try:
-            sig = _signal_for(symbol)
-        except Exception:
-            logger.exception("%s: signal computation failed", symbol)
-            sig = {"action": "hold", "reason": "error fetching data", "price": None, "sparkline": None}
-        rows.append(
-            {
-                "symbol": symbol,
-                "category": _strategies[symbol].name,
-                "position": _portfolio.position_for(symbol),
-                "badge_class": sig["action"],
-                "badge_text": sig["action"],
-                "reason": sig["reason"],
-                "price": sig["price"],
-                "sparkline": sig["sparkline"],
-            }
+    # Parallel across symbols: each row needs its own bars fetch + position
+    # lookup, both separate Alpaca round-trips that don't depend on any
+    # other symbol's result.
+    return _parallel_map(_fetch_conservative_row, config.SYMBOLS)
+
+
+def _fetch_dca_row(args):
+    tier_key, broker, portfolio, inst = args
+    symbol, crypto, label = inst["symbol"], inst["crypto"], inst["label"]
+    bars = pd.DataFrame()
+    try:
+        bars = broker.get_weekly_bars(symbol, crypto=crypto)
+        status = compute_dca_status(bars)
+    except Exception:
+        logger.exception("%s [%s]: failed to compute DCA row", symbol, tier_key)
+        status = compute_dca_status(pd.DataFrame())
+
+    if status.error:
+        badge_class, badge_text, reason = "dca-none", "no data", "price data unavailable"
+    else:
+        badge_class = _ARMED_CLASSES[status.armed_level]
+        badge_text = _DCA_BADGE_TEXT[status.armed_level]
+        reason = (
+            f"{status.pct_from_level1:+.1f}% vs Level 1 (${status.level1:.2f})"
+            if status.pct_from_level1 is not None
+            else "insufficient weekly history"
         )
-    return rows
+
+    return {
+        "symbol": symbol,
+        "category": label,
+        "position": portfolio.position_for(symbol),
+        "badge_class": badge_class,
+        "badge_text": badge_text,
+        "reason": reason,
+        "price": status.price,
+        "sparkline": _sparkline_from_bars(bars),
+    }
 
 
 def _dca_rows(tier_key, broker, portfolio):
-    rows = []
-    for inst in traded_instruments_for_tier(tier_key):
-        symbol, crypto, label = inst["symbol"], inst["crypto"], inst["label"]
-        bars = pd.DataFrame()
-        try:
-            bars = broker.get_weekly_bars(symbol, crypto=crypto)
-            status = compute_dca_status(bars)
-        except Exception:
-            logger.exception("%s [%s]: failed to compute DCA row", symbol, tier_key)
-            status = compute_dca_status(pd.DataFrame())
-
-        if status.error:
-            badge_class, badge_text, reason = "dca-none", "no data", "price data unavailable"
-        else:
-            badge_class = _ARMED_CLASSES[status.armed_level]
-            badge_text = _DCA_BADGE_TEXT[status.armed_level]
-            reason = (
-                f"{status.pct_from_level1:+.1f}% vs Level 1 (${status.level1:.2f})"
-                if status.pct_from_level1 is not None
-                else "insufficient weekly history"
-            )
-
-        rows.append(
-            {
-                "symbol": symbol,
-                "category": label,
-                "position": portfolio.position_for(symbol),
-                "badge_class": badge_class,
-                "badge_text": badge_text,
-                "reason": reason,
-                "price": status.price,
-                "sparkline": _sparkline_from_bars(bars),
-            }
-        )
-    return rows
+    instruments = traded_instruments_for_tier(tier_key)
+    args = [(tier_key, broker, portfolio, inst) for inst in instruments]
+    return _parallel_map(_fetch_dca_row, args)
 
 
 _TIER_INSTRUMENTS_LABEL = {"conservative": "Strategy", "growth": "Category", "aggressive": "Category"}
@@ -459,10 +492,31 @@ def _build_payload(tier_key):
 def get_dashboard_data(tier_key="conservative"):
     if tier_key not in TIER_BROKERS:
         tier_key = "conservative"
-    with _lock:
+    with _locks[tier_key]:
         now = time.time()
         entry = _cache.get(tier_key)
         if entry is None or now >= entry["expires_at"]:
             entry = {"data": _build_payload(tier_key), "expires_at": now + _CACHE_TTL_SECONDS}
             _cache[tier_key] = entry
         return entry["data"]
+
+
+# Background pre-warming: refreshes all three tiers' caches on a fixed
+# cadence (a little faster than they expire) so a tab click almost always
+# reads an already-warm cache instead of triggering the computation live.
+# Without this, switching tabs is only fast if you happen to hit within the
+# 45s window of someone else's (or your own) last visit to that tier.
+_PREWARM_INTERVAL_SECONDS = 35
+
+
+def _prewarm_loop():
+    while True:
+        for tier_key in TIER_BROKERS:
+            try:
+                get_dashboard_data(tier_key)
+            except Exception:
+                logger.exception("%s: background prewarm failed", tier_key)
+        time.sleep(_PREWARM_INTERVAL_SECONDS)
+
+
+threading.Thread(target=_prewarm_loop, daemon=True, name="dashboard-prewarm").start()
