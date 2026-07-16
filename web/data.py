@@ -305,11 +305,15 @@ def _tier_account(broker):
 
 
 def _compute_tiers():
-    accounts = {
-        "aggressive": _tier_account(_aggressive_broker),
-        "growth": _tier_account(_growth_broker),
-        "conservative": _tier_account(_broker),
-    }
+    # 3 independent account lookups -- concurrent, not sequential, for the
+    # same reason as _compute_for_tier's account block.
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {
+            "aggressive": pool.submit(_tier_account, _aggressive_broker),
+            "growth": pool.submit(_tier_account, _growth_broker),
+            "conservative": pool.submit(_tier_account, _broker),
+        }
+        accounts = {key: future.result() for key, future in futures.items()}
     return [{**tier, "account": accounts[tier["key"]]} for tier in TIERS]
 
 
@@ -439,30 +443,44 @@ def _dca_rows(tier_key, broker, portfolio):
 _TIER_INSTRUMENTS_LABEL = {"conservative": "Strategy", "growth": "Category", "aggressive": "Category"}
 
 
+def _fetch_account_block(portfolio, broker):
+    return portfolio.equity(), portfolio.cash(), portfolio.exposure_pct(), broker.is_market_open()
+
+
 def _compute_for_tier(tier_key):
     if tier_key == "conservative":
         broker, portfolio = _broker, _portfolio
-        rows = _conservative_rows()
+        rows_fn = _conservative_rows
     else:
         broker = TIER_BROKERS.get(tier_key)
         portfolio = TIER_PORTFOLIOS.get(tier_key)
         if broker is None or portfolio is None:
             return {"connected": False, "tier": tier_key}
-        rows = _dca_rows(tier_key, broker, portfolio)
+        rows_fn = lambda: _dca_rows(tier_key, broker, portfolio)  # noqa: E731
 
-    try:
-        equity = portfolio.equity()
-        cash = portfolio.cash()
-        exposure_pct = portfolio.exposure_pct()
-        market_open = broker.is_market_open()
-    except Exception:
-        # These 4 calls have no internal fallback (unlike position_for,
-        # which already degrades to None on failure) -- a slow/unreachable
-        # Alpaca now fails after the 15s timeout instead of hanging
-        # forever, but without this it would still crash the whole page
-        # with a raw 500. Surface a clean, friendly degraded state instead.
-        logger.exception("%s: failed to fetch core account data", tier_key)
-        return {"connected": False, "tier": tier_key, "temporarily_unavailable": True}
+    # rows, the account block (equity/cash/exposure/market status), and
+    # transaction history are all independent of each other -- run them
+    # concurrently instead of one after another. Each can take up to the
+    # 15s per-call Alpaca timeout on its own; running them sequentially
+    # let a single tier's worst case stack up past a minute, which is long
+    # enough to exceed gunicorn's worker timeout and get the whole process
+    # killed mid-request -- confirmed live as an intermittent 502 Bad
+    # Gateway from Render's proxy while a fresh worker spins up.
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        rows_future = pool.submit(rows_fn)
+        account_future = pool.submit(_fetch_account_block, portfolio, broker)
+        transactions_future = pool.submit(_compute_transactions, broker)
+
+        rows = rows_future.result()
+        performance = transactions_future.result()
+        try:
+            equity, cash, exposure_pct, market_open = account_future.result()
+        except Exception:
+            # No internal fallback for these 4 calls (unlike position_for,
+            # which already degrades to None on failure) -- surface a
+            # clean, friendly degraded state instead of a raw 500.
+            logger.exception("%s: failed to fetch core account data", tier_key)
+            return {"connected": False, "tier": tier_key, "temporarily_unavailable": True}
 
     chart = _compute_equity_chart(broker, equity)
     if chart and equity > 0 and abs(chart["end_equity"] - equity) / equity > 0.05:
@@ -489,14 +507,24 @@ def _compute_for_tier(tier_key):
         "exposure_pct": exposure_pct,
         "rows": rows,
         "chart": chart,
-        "performance": _compute_transactions(broker),
+        "performance": performance,
     }
 
 
 def _build_payload(tier_key):
-    payload = _compute_for_tier(tier_key)
-    payload["tiers"] = _compute_tiers()
-    payload["watchlist"] = get_watchlist_data()
+    # The active tier's data, the 3-tier summary, and the watchlist are all
+    # independent of each other -- concurrent for the same reason as the
+    # two functions above. get_watchlist_data() is usually a cheap cache
+    # hit (15min TTL) but isn't when it isn't, and that shouldn't add to
+    # the active tier's own latency.
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        tier_future = pool.submit(_compute_for_tier, tier_key)
+        tiers_future = pool.submit(_compute_tiers)
+        watchlist_future = pool.submit(get_watchlist_data)
+
+        payload = tier_future.result()
+        payload["tiers"] = tiers_future.result()
+        payload["watchlist"] = watchlist_future.result()
     payload["dca_levels"] = DCA_LEVELS
     payload["options_layer"] = OPTIONS_LAYER
     return payload
