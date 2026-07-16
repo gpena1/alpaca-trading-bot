@@ -540,38 +540,3 @@ def get_dashboard_data(tier_key="conservative"):
             entry = {"data": _build_payload(tier_key), "expires_at": now + _CACHE_TTL_SECONDS}
             _cache[tier_key] = entry
         return entry["data"]
-
-
-# Background pre-warming: refreshes all three tiers' caches on a fixed
-# cadence (a little faster than they expire) so a tab click almost always
-# reads an already-warm cache instead of triggering the computation live.
-# Only runs while someone's actually visiting the dashboard -- Render's free
-# tier has very little CPU, and there's no reason to keep doing concurrent
-# background fetches around the clock when nobody's looking. Idles down to
-# doing nothing (just a cheap timestamp check every few seconds) after a
-# few minutes of no visits, and picks back up the moment a real request
-# comes in via mark_activity().
-_PREWARM_INTERVAL_SECONDS = 35
-_IDLE_TIMEOUT_SECONDS = 300
-_last_activity_at = time.time()
-
-
-def mark_activity():
-    global _last_activity_at
-    _last_activity_at = time.time()
-
-
-def _prewarm_loop():
-    while True:
-        if time.time() - _last_activity_at <= _IDLE_TIMEOUT_SECONDS:
-            for tier_key in TIER_BROKERS:
-                try:
-                    get_dashboard_data(tier_key)
-                except Exception:
-                    logger.exception("%s: background prewarm failed", tier_key)
-            time.sleep(_PREWARM_INTERVAL_SECONDS)
-        else:
-            time.sleep(5)  # idle: just check back soon in case activity resumes
-
-
-threading.Thread(target=_prewarm_loop, daemon=True, name="dashboard-prewarm").start()
