@@ -95,7 +95,17 @@ MAX_TOTAL_EXPOSURE_PCT = 0.90  # cap on (sum of all positions / account equity)
 # Each tier holds 10+ symbols (vs Conservative's 5), so the per-symbol cap
 # is much smaller to avoid one ticker dominating the account. No stop-loss/
 # take-profit here -- those would fight the DCA-the-dip logic directly.
-DCA_MAX_ALLOCATION_PCT_PER_SYMBOL = 0.08
-DCA_MAX_TOTAL_EXPOSURE_PCT = 0.90
+#
+# Backtested 2026-07-15 over a 3-year weekly window: swept allocation
+# 4-8% x exposure 50-90%. Drawdown floors around 19% (Growth) / 26%
+# (Aggressive) no matter how far allocation is cut -- it's inherent to
+# holding leveraged ETFs (SOXL/LABU) and crypto, not a sizing artifact, so
+# there was no combination that hit a Conservative-style <15% ceiling.
+# 4%/60% roughly halves drawdown vs the original 8%/90% while keeping most
+# of the return (Growth: 33.4%->19.4% DD, +76.8%->+40% return; Aggressive:
+# 41.9%->26.8% DD, +213.9%->+142% return) -- a real improvement even though
+# it doesn't hit 15%. See bot/backtest.py.
+DCA_MAX_ALLOCATION_PCT_PER_SYMBOL = 0.04
+DCA_MAX_TOTAL_EXPOSURE_PCT = 0.60
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
