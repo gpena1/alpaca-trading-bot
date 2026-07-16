@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
+import requests
 from alpaca.common.enums import Sort
 from alpaca.data.enums import DataFeed
 from alpaca.data.historical.crypto import CryptoHistoricalDataClient
@@ -19,10 +20,35 @@ from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce
 from alpaca.trading.requests import GetOrdersRequest, GetPortfolioHistoryRequest, MarketOrderRequest
+from requests.adapters import HTTPAdapter
 
 import config
 
 logger = logging.getLogger(__name__)
+
+# alpaca-py's internal request path (RESTClient._one_request) calls
+# self._session.request(...) without ever passing a timeout, so a hung or
+# very slow Alpaca response (seen in practice tonight: 504s, multi-minute
+# stalls) blocks that call forever with no way for calling code to recover.
+# With the dashboard now fetching many symbols concurrently per page load,
+# a single stuck call can hang the whole page indefinitely -- this is a
+# real, confirmed cause of the "white screen that never loads" symptom.
+# Enforced here, once, at the requests.Session level so it applies to every
+# Alpaca call (trading, stock data, crypto data) without touching each of
+# the many call sites throughout the codebase.
+_ALPACA_REQUEST_TIMEOUT_SECONDS = 15
+
+
+class _TimeoutHTTPAdapter(HTTPAdapter):
+    def send(self, request, **kwargs):
+        if kwargs.get("timeout") is None:
+            kwargs["timeout"] = _ALPACA_REQUEST_TIMEOUT_SECONDS
+        return super().send(request, **kwargs)
+
+
+def _enforce_timeout(session: requests.Session) -> None:
+    session.mount("https://", _TimeoutHTTPAdapter())
+    session.mount("http://", _TimeoutHTTPAdapter())
 
 
 def is_crypto(symbol: str) -> bool:
@@ -42,6 +68,8 @@ class Broker:
         )
         self.stock_data_client = StockHistoricalDataClient(api_key, secret_key)
         self.crypto_data_client = CryptoHistoricalDataClient(api_key, secret_key)
+        for client in (self.trading_client, self.stock_data_client, self.crypto_data_client):
+            _enforce_timeout(client._session)
 
     def is_market_open(self) -> bool:
         clock = self.trading_client.get_clock()

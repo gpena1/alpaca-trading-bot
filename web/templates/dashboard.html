@@ -280,7 +280,11 @@
   <div id="dashboard-body">
   {% if not connected %}
   <div class="chart-card sopena-card">
+    {% if temporarily_unavailable %}
+    <div class="empty-state">Live data is temporarily unavailable &mdash; Alpaca may be slow or unreachable right now. This page will work again once it responds; try refreshing in a moment.</div>
+    {% else %}
     <div class="empty-state">This tier isn't connected yet &mdash; add its Alpaca API credentials to enable it.</div>
+    {% endif %}
   </div>
   {% else %}
   <div class="meta">Paper trading &middot; updated {{ generated_at }}</div>

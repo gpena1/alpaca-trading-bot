@@ -308,7 +308,7 @@ def _compute_tiers():
     accounts = {
         "aggressive": _tier_account(_aggressive_broker),
         "growth": _tier_account(_growth_broker),
-        "conservative": {"connected": True, "equity": _portfolio.equity(), "cash": _portfolio.cash()},
+        "conservative": _tier_account(_broker),
     }
     return [{**tier, "account": accounts[tier["key"]]} for tier in TIERS]
 
@@ -450,7 +450,20 @@ def _compute_for_tier(tier_key):
             return {"connected": False, "tier": tier_key}
         rows = _dca_rows(tier_key, broker, portfolio)
 
-    equity = portfolio.equity()
+    try:
+        equity = portfolio.equity()
+        cash = portfolio.cash()
+        exposure_pct = portfolio.exposure_pct()
+        market_open = broker.is_market_open()
+    except Exception:
+        # These 4 calls have no internal fallback (unlike position_for,
+        # which already degrades to None on failure) -- a slow/unreachable
+        # Alpaca now fails after the 15s timeout instead of hanging
+        # forever, but without this it would still crash the whole page
+        # with a raw 500. Surface a clean, friendly degraded state instead.
+        logger.exception("%s: failed to fetch core account data", tier_key)
+        return {"connected": False, "tier": tier_key, "temporarily_unavailable": True}
+
     chart = _compute_equity_chart(broker, equity)
     if chart and equity > 0 and abs(chart["end_equity"] - equity) / equity > 0.05:
         # Safety net: if the base_value correction above didn't fully
@@ -470,10 +483,10 @@ def _compute_for_tier(tier_key):
         "tier": tier_key,
         "instruments_label": _TIER_INSTRUMENTS_LABEL[tier_key],
         "generated_at": _fmt_chicago(datetime.now(timezone.utc), fmt="%b %-d, %Y %-I:%M:%S %p"),
-        "market_open": broker.is_market_open(),
+        "market_open": market_open,
         "equity": equity,
-        "cash": portfolio.cash(),
-        "exposure_pct": portfolio.exposure_pct(),
+        "cash": cash,
+        "exposure_pct": exposure_pct,
         "rows": rows,
         "chart": chart,
         "performance": _compute_transactions(broker),
