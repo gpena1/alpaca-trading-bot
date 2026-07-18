@@ -12,19 +12,24 @@ directly. Stop and ask Gabriel if any step fails rather than guessing.
 ## 0. Prerequisites
 
 - Python 3.9+ and `git` installed.
-- GitHub access to `gpena1/alpaca-trading-bot` already accepted (Gabriel
-  added you as a collaborator) and you've forked it to your own account.
-- The Alpaca API key/secret and dashboard credentials, which Gabriel is
-  sharing with you through a password manager vault — **not** through this
-  file or email. If you don't have vault access yet, get that from him
-  before step 3.
+- Gabriel's GitHub login (`gpena1`), shared with you through the password
+  manager vault — **not** through this file or email. You're using his
+  account directly rather than your own, so anything you push shows up
+  as coming from him. Coordinate with him before pushing any code changes
+  so you don't clobber each other's work.
+- The Alpaca API key/secret and dashboard credentials, also in the vault.
+  If you don't have vault access yet, get that from him before step 3.
 
-## 1. Clone your fork
+## 1. Clone the repo
 
 ```bash
-git clone https://github.com/<your-github-username>/alpaca-trading-bot.git
+git clone https://github.com/gpena1/alpaca-trading-bot.git
 cd alpaca-trading-bot
 ```
+
+Log in with Gabriel's GitHub credentials if `git` prompts you (or set up
+an SSH key / credential helper under his account first, if you'd rather
+not type a password each time).
 
 ## 2. Set up the Python environment
 
@@ -94,5 +99,5 @@ directly to the internet.
 
 ## Questions / something doesn't work
 
-Message Gabriel (brian, you know his info) rather than guessing on
-anything involving live order submission or shared credentials.
+Message Gabriel directly rather than guessing on anything involving live
+order submission or shared credentials.
