@@ -11,6 +11,13 @@ directly. Stop and ask Gabriel if any step fails rather than guessing.
 
 ## 0. Prerequisites
 
+**You're on Windows** — commands below are given for both PowerShell and
+Mac/Linux where they differ. One extra note: `gunicorn` (used in step 6)
+doesn't run on Windows at all (it relies on a Unix-only feature), so that
+step uses `waitress` instead — same job, cross-platform. Everything else
+in this repo (the actual bot and dashboard code) is plain Python and runs
+identically on Windows.
+
 - Python 3.9+ and `git` installed.
 - Gabriel's GitHub login (`gpena1`), shared with you through the password
   manager vault — **not** through this file or email. You're using his
@@ -33,12 +40,24 @@ not type a password each time).
 
 ## 2. Set up the Python environment
 
+PowerShell (Windows):
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+```
+
+Mac/Linux:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 ```
+
+(You already have a filled-in `.env` from Gabriel, so you can skip the
+copy step and just drop that file in instead — see step 3.)
 
 ## 3. Fill in `.env`
 
@@ -83,19 +102,36 @@ confirms your API keys and environment are wired up correctly.
 
 ## 6. Run the web dashboard (safe to run alongside Gabriel's)
 
+Windows (PowerShell) — `gunicorn` doesn't work here, use `waitress` instead:
+```powershell
+pip install waitress
+waitress-serve --host=0.0.0.0 --port=8000 web.app:app
+```
+
+Mac/Linux:
 ```bash
 gunicorn -w 1 --threads 4 -b 0.0.0.0:8000 web.app:app
 ```
 
 Visit `http://localhost:8000`, log in with the `DASHBOARD_USERNAME` /
 `DASHBOARD_PASSWORD` you set in step 3. If you're exposing this on a real
-server, put it behind nginx/Caddy for HTTPS rather than serving gunicorn
-directly to the internet.
+server, put it behind nginx/Caddy (or IIS on Windows) for HTTPS rather
+than serving directly to the internet.
 
 ## 7. Running the trading bot long-term (only if you're the one running it)
 
-`python3 -m bot.main` polls forever — run it under `systemd`, `tmux`,
-`screen`, or `pm2` so it survives you disconnecting from the server.
+`python3 -m bot.main` polls forever, so it needs to keep running after you
+close your terminal:
+
+- **Windows**: simplest is to leave a PowerShell window open, or use Task
+  Scheduler with "Run whether user is logged on or not" so it survives
+  reboots. For something closer to a real background service, look at
+  [NSSM](https://nssm.cc) (wraps any command as a Windows service).
+- **Mac/Linux**: run it under `systemd`, `tmux`, `screen`, or `pm2`.
+
+If you'd rather have a real Linux environment instead of juggling Windows
+equivalents, [WSL](https://learn.microsoft.com/windows/wsl/install) gives
+you one inside Windows, and every Mac/Linux command above works unmodified.
 
 ## Questions / something doesn't work
 
