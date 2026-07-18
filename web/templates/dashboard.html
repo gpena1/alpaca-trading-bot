@@ -168,75 +168,6 @@
     gap: 12px;
     margin-bottom: 28px;
   }
-
-  .section-divider {
-    margin: 40px 0 20px;
-    padding-top: 28px;
-    border-top: 1px solid var(--sopena-linen);
-  }
-  .subsection-title { font-family: var(--sopena-serif); font-weight: 400; font-size: 1.4rem; color: var(--sopena-sage-ink); margin: 0 0 4px; }
-  .section-intro { color: var(--sopena-sage); font-size: 13px; margin: 0 0 20px; max-width: 640px; }
-
-  .tier-tiles {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
-    margin-bottom: 28px;
-  }
-  .tier-tiles .tile .value { font-size: 20px; }
-  .tier-tiles .tile .value.not-connected { font-size: 14px; color: var(--sopena-muted); font-family: var(--sopena-sans); }
-  .tier-tiles .tile .sub { font-size: 12px; color: var(--sopena-sage); margin-top: 8px; line-height: 1.5; }
-
-  h3.category-title {
-    font-size: 13px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--sopena-slate);
-    margin: 0 0 2px;
-  }
-  .category-thesis { color: var(--sopena-muted); font-size: 12px; margin: 0 0 10px; }
-  .category-note { color: var(--sopena-muted); font-size: 12px; font-style: italic; margin: 8px 0 24px; }
-
-  .badge.dca-none  { background: var(--hold-bg); color: var(--hold-text); }
-  .badge.dca-armed { background: color-mix(in srgb, var(--sopena-taupe) 28%, transparent); color: var(--sopena-sage-ink); }
-  .badge.dca-ready { background: color-mix(in srgb, var(--sopena-gain) 18%, transparent); color: var(--sopena-gain); }
-
-  .dca-rules {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 12px;
-    margin-bottom: 20px;
-  }
-  .dca-rules .tile .label { display: flex; justify-content: space-between; }
-  .dca-rules .tile .trigger { font-size: 12px; color: var(--sopena-sage); margin-top: 6px; line-height: 1.5; }
-  .options-layer { color: var(--sopena-sage); font-size: 13px; line-height: 1.8; margin: 0; padding-left: 18px; }
-
-  .tier-tabs {
-    display: flex;
-    gap: 4px;
-    background: var(--sopena-linen);
-    padding: 4px;
-    border-radius: 8px;
-    margin-bottom: 24px;
-    width: fit-content;
-  }
-  .tier-tab {
-    appearance: none;
-    border: none;
-    background: transparent;
-    padding: 8px 18px;
-    border-radius: 6px;
-    font-family: var(--sopena-sans);
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    color: var(--sopena-slate);
-    cursor: pointer;
-    transition: background 0.12s ease, color 0.12s ease;
-  }
-  .tier-tab:hover { color: var(--sopena-sage-ink); }
-  .tier-tab.active { background: var(--sopena-white); color: var(--sopena-sage-ink); box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
 </style>
 </head>
 <body class="sopena">
@@ -263,28 +194,18 @@
 
   <div class="disclaimer">
     <div>
-      <strong>Paper trading accounts &mdash; not financial advice.</strong>
-      <span class="body">Conservative runs backtested SMA/RSI/Donchian strategies. Growth and Aggressive run the price-level DCA-ladder framework from the Portfolio Architecture plan below. All three trade simulated money only, not a recommendation for you or anyone else to buy or sell anything.</span>
+      <strong>Paper trading account &mdash; not financial advice.</strong>
+      <span class="body">Runs backtested SMA/RSI/Donchian strategies against simulated money only, not a recommendation for you or anyone else to buy or sell anything.</span>
     </div>
   </div>
 
   <span class="sopena-rules"></span>
   <h1 class="sopena-title">Trading Bot Dashboard</h1>
 
-  <div class="tier-tabs" id="tier-tabs">
-    <button type="button" class="tier-tab {{ 'active' if tier == 'aggressive' else '' }}" data-tier="aggressive">Aggressive</button>
-    <button type="button" class="tier-tab {{ 'active' if tier == 'growth' else '' }}" data-tier="growth">Growth</button>
-    <button type="button" class="tier-tab {{ 'active' if tier == 'conservative' else '' }}" data-tier="conservative">Conservative</button>
-  </div>
-
   <div id="dashboard-body">
   {% if not connected %}
   <div class="chart-card sopena-card">
-    {% if temporarily_unavailable %}
     <div class="empty-state">Live data is temporarily unavailable &mdash; Alpaca may be slow or unreachable right now. This page will work again once it responds; try refreshing in a moment.</div>
-    {% else %}
-    <div class="empty-state">This tier isn't connected yet &mdash; add its Alpaca API credentials to enable it.</div>
-    {% endif %}
   </div>
   {% else %}
   <div class="meta">Paper trading &middot; updated {{ generated_at }}</div>
@@ -346,7 +267,7 @@
     <thead>
       <tr>
         <th>Symbol</th>
-        <th>{{ instruments_label }}</th>
+        <th>Strategy</th>
         <th>Signal</th>
         <th>Price</th>
         <th>Trend</th>
@@ -445,76 +366,6 @@
     <div class="empty-state">No transactions in the last {{ performance.window_days }} days yet &mdash; this fills in once the bot places its first trade.</div>
   </div>
   {% endif %}
-
-  <div class="section-divider">
-    <span class="sopena-rules"></span>
-    <h2 class="subsection-title">Portfolio Architecture</h2>
-    <p class="section-intro">Capital separation by risk tier, the category watchlist, and the price-level DCA framework this plan runs on. Reference only &mdash; nothing here places a trade.</p>
-
-    <h3 class="category-title">Capital Tiers</h3>
-    <div class="tier-tiles">
-      {% for tier in tiers %}
-      <div class="tile sopena-card">
-        <div class="label">{{ tier.name }} &middot; {{ tier.risk_level }} risk</div>
-        {% if tier.account.connected %}
-        <div class="value">${{ "%.2f"|format(tier.account.equity) }}</div>
-        {% else %}
-        <div class="value not-connected">Not connected</div>
-        {% endif %}
-        <div class="sub">{{ tier.capital_source }}<br>{{ tier.strategy }}</div>
-      </div>
-      {% endfor %}
-    </div>
-
-    <h3 class="category-title">Watchlist</h3>
-    {% for cat in watchlist %}
-    <h3 class="category-title">{{ cat.name }}</h3>
-    <p class="category-thesis">{{ cat.thesis }}</p>
-    <table>
-      <thead>
-        <tr>
-          <th>Symbol</th>
-          <th>Note</th>
-          <th class="num">Price</th>
-          <th class="num">Level 1 (20wk MA)</th>
-          <th>Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for inst in cat.instruments %}
-        <tr>
-          <td><strong>{{ inst.symbol }}</strong></td>
-          <td class="reason">{{ inst.label }}</td>
-          <td class="num">{{ "$%.2f"|format(inst.status.price) if inst.status.price is not none else "—" }}</td>
-          <td class="num">{{ "$%.2f"|format(inst.status.level1) if inst.status.level1 is not none else "—" }}</td>
-          <td><span class="badge {{ inst.status_class }}">{{ inst.status_label }}</span></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% if cat.note %}
-    <p class="category-note">{{ cat.note }}</p>
-    {% endif %}
-    {% endfor %}
-
-    <h3 class="category-title">DCA Entry Rules Engine</h3>
-    <p class="category-thesis">Price-level triggered, not time-based. Each level adds 25% of the target position.</p>
-    <div class="dca-rules">
-      {% for lvl in dca_levels %}
-      <div class="tile sopena-card">
-        <div class="label"><span>Level {{ lvl.level }} &mdash; {{ lvl.label }}</span><span>{{ lvl.pct_of_target }}%</span></div>
-        <div class="trigger">{{ lvl.trigger }}</div>
-      </div>
-      {% endfor %}
-    </div>
-
-    <h3 class="category-title">Options Layer</h3>
-    <ul class="options-layer">
-      {% for line in options_layer %}
-      <li>{{ line }}</li>
-      {% endfor %}
-    </ul>
-  </div>
   {% endif %}
   </div>
 
@@ -603,43 +454,6 @@
     }
 
     setInterval(refresh, REFRESH_MS);
-  })();
-
-  // Tab switcher: fetches the clicked tier's data and swaps it in the same
-  // way auto-refresh does, then rewrites the URL via replaceState so a
-  // reload (or the next auto-refresh tick, which re-fetches
-  // window.location.href) stays on the tier the user picked.
-  (function () {
-    var tabs = document.querySelectorAll('.tier-tab');
-
-    function switchTier(tier) {
-      var url = new URL(window.location.href);
-      url.searchParams.set('tier', tier);
-      fetch(url.toString(), { credentials: 'include' })
-        .then(function (res) { return res.ok ? res.text() : null; })
-        .then(function (html) {
-          if (!html) return;
-          var doc = new DOMParser().parseFromString(html, 'text/html');
-          var freshBody = doc.getElementById('dashboard-body');
-          var currentBody = document.getElementById('dashboard-body');
-          if (!freshBody || !currentBody) return;
-          currentBody.innerHTML = freshBody.innerHTML;
-          history.replaceState(null, '', url.toString());
-          tabs.forEach(function (t) {
-            t.classList.toggle('active', t.getAttribute('data-tier') === tier);
-          });
-          setupEquityChart();
-        })
-        .catch(function () {
-          // Leave the current tab's content in place on failure.
-        });
-    }
-
-    tabs.forEach(function (tab) {
-      tab.addEventListener('click', function () {
-        switchTier(tab.getAttribute('data-tier'));
-      });
-    });
   })();
 </script>
 </body>

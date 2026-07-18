@@ -56,18 +56,14 @@ def is_crypto(symbol: str) -> bool:
 
 
 class Broker:
-    def __init__(self, api_key: str | None = None, secret_key: str | None = None):
-        # Defaults to the primary account; callers pass explicit credentials
-        # to point at one of the other Portfolio Architecture paper accounts.
-        api_key = api_key or config.ALPACA_API_KEY
-        secret_key = secret_key or config.ALPACA_SECRET_KEY
+    def __init__(self):
         self.trading_client = TradingClient(
-            api_key,
-            secret_key,
+            config.ALPACA_API_KEY,
+            config.ALPACA_SECRET_KEY,
             paper=config.IS_PAPER,
         )
-        self.stock_data_client = StockHistoricalDataClient(api_key, secret_key)
-        self.crypto_data_client = CryptoHistoricalDataClient(api_key, secret_key)
+        self.stock_data_client = StockHistoricalDataClient(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY)
+        self.crypto_data_client = CryptoHistoricalDataClient(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY)
         for client in (self.trading_client, self.stock_data_client, self.crypto_data_client):
             _enforce_timeout(client._session)
 
@@ -102,31 +98,6 @@ class Broker:
                 start=start,
                 limit=limit,
                 feed=DataFeed.IEX,
-            )
-            bar_set = self.stock_data_client.get_stock_bars(request)
-
-        df = bar_set.df
-        if df.empty:
-            return df
-        if isinstance(df.index, pd.MultiIndex):
-            df = df.xs(symbol, level="symbol")
-        return df.sort_index()
-
-    def get_weekly_bars(self, symbol: str, crypto: bool, limit: int = 104) -> pd.DataFrame:
-        # 104 weeks (2 years) comfortably covers the 20-week lookback the
-        # DCA framework's moving average needs, even after weekends/holidays
-        # thin out equity bars.
-        start = datetime.now(timezone.utc) - timedelta(weeks=130)
-        timeframe = TimeFrame(1, TimeFrame.Week.unit)
-
-        if crypto:
-            request = CryptoBarsRequest(
-                symbol_or_symbols=symbol, timeframe=timeframe, start=start, limit=limit
-            )
-            bar_set = self.crypto_data_client.get_crypto_bars(request)
-        else:
-            request = StockBarsRequest(
-                symbol_or_symbols=symbol, timeframe=timeframe, start=start, limit=limit, feed=DataFeed.IEX
             )
             bar_set = self.stock_data_client.get_stock_bars(request)
 
@@ -190,14 +161,9 @@ class Broker:
         )
         return self.trading_client.get_portfolio_history(request)
 
-    def submit_market_order(self, symbol: str, qty: float, side: OrderSide, crypto: bool | None = None):
+    def submit_market_order(self, symbol: str, qty: float, side: OrderSide):
         # Crypto supports GTC; equities must use DAY orders that respect market hours.
-        # `crypto` lets callers outside config.CRYPTO_SYMBOLS's fixed set (e.g. the
-        # Portfolio Architecture tiers' own crypto symbols) state it explicitly;
-        # defaults to the old symbol-lookup behavior when not given.
-        if crypto is None:
-            crypto = is_crypto(symbol)
-        time_in_force = TimeInForce.GTC if crypto else TimeInForce.DAY
+        time_in_force = TimeInForce.GTC if is_crypto(symbol) else TimeInForce.DAY
         order_request = MarketOrderRequest(
             symbol=symbol,
             qty=qty,

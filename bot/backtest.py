@@ -1,22 +1,14 @@
 """Backtest every live strategy against historical data before trusting it
-with real trades: Conservative's trend/mean-reversion/momentum strategies
-(15-min bars) via run_backtest(), and Growth/Aggressive's DCA-ladder
-strategy (weekly bars) via run_dca_backtest("growth"/"aggressive").
+with real trades, via run_backtest().
 
 Walks bars forward with no lookahead -- each decision only ever sees bars
 up to and including "now" -- and reuses the exact same live decision logic
-(bot.main.build_strategies() for Conservative, bot.dca's compute_dca_status
-sizing math for Growth/Aggressive), so the backtest can never silently
-drift from what's actually deployed. Applies 0.05% slippage and $0
-commission (Alpaca is commission-free) to every simulated fill.
+(bot.main.build_strategies()), so the backtest can never silently drift
+from what's actually deployed. Applies 0.05% slippage and $0 commission
+(Alpaca is commission-free) to every simulated fill.
 
-The DCA-ladder backtest never produces a closed Trade (matches live: it's
-buy-only, exits are manual via the options overlay) -- its metrics come
-entirely from the equity curve (return, drawdown, Sharpe), which is the
-honest way to evaluate a strategy designed to never close a position.
-
-Two deliberate deviations from the generic guide the Conservative-tier
-backtest was originally built from:
+Two deliberate deviations from the generic guide this backtest was
+originally built from:
 
 1. Timeframe: every symbol backtests on config.BAR_TIMEFRAME_MINUTES
    (15-min), matching what the live bot actually runs -- not the mixed
@@ -33,7 +25,6 @@ Run: python3 -m bot.backtest
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -45,7 +36,6 @@ import pandas as pd
 
 import config
 from bot.broker import Broker, is_crypto
-from bot.dca import DCA_LEVELS, compute_dca_status, traded_instruments_for_tier
 from bot.main import build_strategies
 from alpaca.data.timeframe import TimeFrame
 
@@ -234,114 +224,6 @@ def simulate_combined(
     return SimResult("COMBINED", trades, equity_curve, current_equity(), open_unrealized)
 
 
-def _dca_tranches_to_buy(qty: float, current_price: float, armed_level: int, tranche_dollars: float) -> int:
-    """Mirrors bot/dca.py's evaluate_dca_entry exactly: tranches already
-    bought are inferred from current *mark-to-market* position value (not
-    cost basis), matching what the live bot actually does -- bugs and all,
-    since the point of backtesting is to validate what will really run."""
-    if tranche_dollars <= 0:
-        return 0
-    current_value = qty * current_price
-    tranches_bought = round(current_value / tranche_dollars)
-    return max(0, armed_level - tranches_bought)
-
-
-def simulate_dca_symbol(
-    symbol: str,
-    bars: pd.DataFrame,
-    starting_cash: float = STARTING_CASH,
-    allocation_pct: float = config.DCA_MAX_ALLOCATION_PCT_PER_SYMBOL,
-) -> SimResult:
-    """Buy-only tranche accumulation on weekly bars, no lookahead -- same
-    logic bot/dca.py's evaluate_dca_entry runs live, just walked forward
-    over history instead of called once per live cycle. No sell/stop-loss
-    exists for this strategy (matches live: exits are manual, via the
-    options overlay described in the Portfolio Architecture doc), so unlike
-    simulate_symbol this never produces a Trade -- metrics come entirely
-    from the equity curve (return, drawdown, Sharpe), which is the honest
-    way to evaluate a strategy that's designed to never close a position."""
-    cash = starting_cash
-    qty = 0.0
-    equity_curve: list[tuple] = []
-    tranche_dollars = (starting_cash * allocation_pct) / len(DCA_LEVELS)
-
-    for i in range(1, len(bars)):
-        window = bars.iloc[: i + 1]
-        current_time = window.index[-1]
-        current_price = float(window["close"].iloc[-1])
-        status = compute_dca_status(window)
-
-        if not status.error and status.armed_level > 0:
-            tranches_to_buy = _dca_tranches_to_buy(qty, current_price, status.armed_level, tranche_dollars)
-            if tranches_to_buy > 0:
-                buy_dollars = tranche_dollars * tranches_to_buy
-                if 0 < buy_dollars <= cash:
-                    fill = _fill_price(current_price, is_buy=True)
-                    qty += buy_dollars / fill
-                    cash -= buy_dollars
-
-        equity_curve.append((current_time, cash + qty * current_price))
-
-    final_price = float(bars["close"].iloc[-1]) if len(bars) else starting_cash
-    final_equity = cash + qty * final_price
-    return SimResult(symbol, [], equity_curve, final_equity, 0.0)
-
-
-def simulate_dca_combined(
-    tier_key: str,
-    symbol_bars: dict,
-    starting_cash: float = STARTING_CASH,
-    allocation_pct: float = config.DCA_MAX_ALLOCATION_PCT_PER_SYMBOL,
-    max_total_exposure_pct: float = config.DCA_MAX_TOTAL_EXPOSURE_PCT,
-) -> SimResult:
-    """Shared-capital version across a tier's full symbol list, mirroring
-    simulate_combined's approach for Conservative but using tranche sizing
-    instead of a single-shot BUY signal."""
-    cash = starting_cash
-    positions: dict[str, float] = {}  # symbol -> qty
-    latest_price: dict[str, float] = {}
-    equity_curve: list[tuple] = []
-
-    events = []
-    for symbol, bars in symbol_bars.items():
-        for idx in range(len(bars)):
-            events.append((bars.index[idx], symbol, idx))
-    events.sort(key=lambda e: e[0])
-
-    def current_equity() -> float:
-        return cash + sum(qty * latest_price.get(s, 0.0) for s, qty in positions.items())
-
-    for ts, symbol, idx in events:
-        bars = symbol_bars[symbol]
-        window = bars.iloc[: idx + 1]
-        current_price = float(window["close"].iloc[-1])
-        latest_price[symbol] = current_price
-
-        if idx < 1:
-            equity_curve.append((ts, current_equity()))
-            continue
-
-        status = compute_dca_status(window)
-        if not status.error and status.armed_level > 0:
-            equity = current_equity()
-            exposure = sum(qty * latest_price.get(s, 0.0) for s, qty in positions.items())
-            room_left_pct = max_total_exposure_pct - (exposure / equity if equity > 0 else 1.0)
-            if room_left_pct > 0:
-                tranche_dollars = (equity * min(allocation_pct, room_left_pct)) / len(DCA_LEVELS)
-                qty_held = positions.get(symbol, 0.0)
-                tranches_to_buy = _dca_tranches_to_buy(qty_held, current_price, status.armed_level, tranche_dollars)
-                if tranches_to_buy > 0:
-                    buy_dollars = tranche_dollars * tranches_to_buy
-                    if 0 < buy_dollars <= cash:
-                        fill = _fill_price(current_price, is_buy=True)
-                        positions[symbol] = qty_held + buy_dollars / fill
-                        cash -= buy_dollars
-
-        equity_curve.append((ts, current_equity()))
-
-    return SimResult(f"{tier_key.upper()} COMBINED", [], equity_curve, current_equity(), 0.0)
-
-
 def compute_metrics(result: SimResult, starting_cash: float, bar_seconds: float) -> dict:
     trades = result.trades
     total_trades = len(trades)
@@ -514,84 +396,5 @@ def run_backtest():
     return metrics_list
 
 
-DCA_BACKTEST_YEARS = 3
-_DCA_FETCH_WORKERS = 5
-
-
-def fetch_dca_backtest_bars(broker: Broker, symbol: str, crypto: bool, years: int = DCA_BACKTEST_YEARS) -> pd.DataFrame:
-    """DCA-ladder bars: weekly timeframe, longer lookback than the 15-min
-    strategies since the 20-week MA needs real runway before any signal is
-    meaningful."""
-    timeframe = TimeFrame(1, TimeFrame.Week.unit)
-    end = datetime.now(timezone.utc)
-    start = end - timedelta(days=years * 365.25)
-    return broker.get_bars_range(symbol, crypto, timeframe, start, end)
-
-
-def run_dca_backtest(tier_key: str):
-    broker = Broker()
-    instruments = traded_instruments_for_tier(tier_key)
-
-    print(f"Fetching {DCA_BACKTEST_YEARS} years of weekly bars for {len(instruments)} {tier_key} symbols...")
-    with ThreadPoolExecutor(max_workers=_DCA_FETCH_WORKERS) as pool:
-        fetched = list(
-            pool.map(lambda inst: fetch_dca_backtest_bars(broker, inst["symbol"], inst["crypto"]), instruments)
-        )
-
-    symbol_bars = {}
-    results = []
-    metrics_list = []
-    warnings = []
-
-    for inst, bars in zip(instruments, fetched):
-        symbol = inst["symbol"]
-        if bars.empty or len(bars) < 30:
-            print(f"  {symbol}: insufficient data ({len(bars)} bars) -- skipped")
-            continue
-
-        symbol_bars[symbol] = bars
-        result = simulate_dca_symbol(symbol, bars)
-        metrics = compute_metrics(result, STARTING_CASH, _bar_seconds(bars))
-        metrics["label"] = f"{symbol} [dca-ladder]"
-        results.append(result)
-        metrics_list.append(metrics)
-
-        if metrics["sharpe_ratio"] < 0:
-            warnings.append(f"{symbol} [dca-ladder]: NEGATIVE Sharpe ratio ({metrics['sharpe_ratio']:.2f})")
-        if metrics["max_drawdown_pct"] > DRAWDOWN_FLAG_PCT:
-            warnings.append(
-                f"{symbol} [dca-ladder]: max drawdown {metrics['max_drawdown_pct']:.1f}% "
-                f"exceeds {DRAWDOWN_FLAG_PCT:.0f}%"
-            )
-
-    if symbol_bars:
-        combined_result = simulate_dca_combined(tier_key, symbol_bars)
-        combined_metrics = compute_metrics(
-            combined_result, STARTING_CASH, _bar_seconds(next(iter(symbol_bars.values())))
-        )
-        results.append(combined_result)
-        metrics_list.append(combined_metrics)
-        label = f"{tier_key.upper()} COMBINED"
-        if combined_metrics["sharpe_ratio"] < 0:
-            warnings.append(f"{label}: NEGATIVE Sharpe ratio ({combined_metrics['sharpe_ratio']:.2f})")
-        if combined_metrics["max_drawdown_pct"] > DRAWDOWN_FLAG_PCT:
-            warnings.append(f"{label}: max drawdown {combined_metrics['max_drawdown_pct']:.1f}% exceeds {DRAWDOWN_FLAG_PCT:.0f}%")
-
-    print_summary_table(metrics_list)
-    if results:
-        plot_equity_curves(results, out_path=f"backtest_results_{tier_key}.png")
-
-    if warnings:
-        print(f"\n⚠ FLAGGED ({tier_key}) -- adjust parameters before trusting these positions live:")
-        for w in warnings:
-            print(f"  - {w}")
-    else:
-        print(f"\nNo {tier_key} DCA-ladder symbols flagged.")
-
-    return metrics_list
-
-
 if __name__ == "__main__":
     run_backtest()
-    run_dca_backtest("growth")
-    run_dca_backtest("aggressive")

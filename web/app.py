@@ -1,9 +1,9 @@
 import logging
 
-from flask import Flask, render_template, request
+from flask import Flask, render_template
 
 from web.auth import require_auth
-from web.data import TIER_BROKERS, get_dashboard_data
+from web.data import get_dashboard_data
 
 logging.basicConfig(level="INFO")
 app = Flask(__name__)
@@ -17,10 +17,7 @@ def healthz():
 @app.get("/")
 @require_auth
 def dashboard():
-    tier = request.args.get("tier", "conservative")
-    if tier not in TIER_BROKERS:
-        tier = "conservative"
-    return render_template("dashboard.html", **get_dashboard_data(tier))
+    return render_template("dashboard.html", **get_dashboard_data())
 
 
 if __name__ == "__main__":

@@ -71,10 +71,8 @@ DASHBOARD_USERNAME=
 DASHBOARD_PASSWORD=
 ```
 
-`ALPACA_GROWTH_*` / `ALPACA_AGGRESSIVE_*` are optional sub-account keys for
-two of the dashboard's tiers — only fill those in if Gabriel gave you
-values for them. Leave `ALPACA_BASE_URL` pointed at the paper endpoint
-unless you and Gabriel have explicitly agreed to trade live together.
+Leave `ALPACA_BASE_URL` pointed at the paper endpoint unless you and Gabriel
+have explicitly agreed to trade live together.
 
 Pick your own `DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD` — those are just
 for your own copy of the web dashboard and don't need to match Gabriel's.

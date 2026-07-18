@@ -9,7 +9,6 @@ import time
 
 import config
 from bot.broker import Broker, is_crypto
-from bot.dca import evaluate_dca_entry, traded_instruments_for_tier
 from bot.portfolio import Portfolio
 from bot.risk_manager import RiskManager
 from bot.strategies import STRATEGY_REGISTRY
@@ -73,47 +72,6 @@ def run_cycle(broker: Broker, portfolio: Portfolio, risk_manager: RiskManager, s
             logger.exception("%s: error during cycle, skipping this symbol", symbol)
 
 
-def run_dca_cycle(tier_key: str, broker: Broker, portfolio: Portfolio):
-    """Growth/Aggressive tiers: buy-only DCA-ladder accumulation across
-    their mapped watchlist categories. Conservative never runs this --
-    it keeps run_cycle()'s existing strategies untouched."""
-    instruments = traded_instruments_for_tier(tier_key)
-    market_open = None  # lazily fetched, only if a non-crypto symbol needs it
-
-    for inst in instruments:
-        symbol, crypto = inst["symbol"], inst["crypto"]
-        if not crypto:
-            if market_open is None:
-                market_open = broker.is_market_open()
-            if not market_open:
-                logger.debug("%s [%s]: equity market closed, skipping", symbol, tier_key)
-                continue
-
-        try:
-            decision = evaluate_dca_entry(
-                broker,
-                portfolio,
-                symbol,
-                crypto,
-                config.DCA_MAX_ALLOCATION_PCT_PER_SYMBOL,
-                config.DCA_MAX_TOTAL_EXPOSURE_PCT,
-            )
-            if decision is None:
-                continue
-
-            broker.submit_market_order(decision.symbol, decision.qty, decision.side, crypto=crypto)
-            logger.info(
-                "%s [%s]: order submitted %s qty=%s reason=%s",
-                symbol,
-                tier_key,
-                decision.side.value,
-                decision.qty,
-                decision.reason,
-            )
-        except Exception:
-            logger.exception("%s [%s]: error during DCA cycle, skipping this symbol", symbol, tier_key)
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -138,28 +96,12 @@ def main():
     risk_manager = RiskManager(portfolio)
     strategies = build_strategies()
 
-    # Growth/Aggressive tiers: separate paper accounts, DCA-ladder only.
-    # Skipped entirely if their credentials aren't set -- same account is
-    # never touched by run_cycle()'s Conservative-tier logic.
-    dca_tiers = []
-    if config.ALPACA_GROWTH_API_KEY and config.ALPACA_GROWTH_SECRET_KEY:
-        growth_broker = Broker(config.ALPACA_GROWTH_API_KEY, config.ALPACA_GROWTH_SECRET_KEY)
-        dca_tiers.append(("growth", growth_broker, Portfolio(growth_broker)))
-    if config.ALPACA_AGGRESSIVE_API_KEY and config.ALPACA_AGGRESSIVE_SECRET_KEY:
-        aggressive_broker = Broker(config.ALPACA_AGGRESSIVE_API_KEY, config.ALPACA_AGGRESSIVE_SECRET_KEY)
-        dca_tiers.append(("aggressive", aggressive_broker, Portfolio(aggressive_broker)))
-
-    def run_all_cycles():
-        run_cycle(broker, portfolio, risk_manager, strategies)
-        for tier_key, tier_broker, tier_portfolio in dca_tiers:
-            run_dca_cycle(tier_key, tier_broker, tier_portfolio)
-
     if args.once:
-        run_all_cycles()
+        run_cycle(broker, portfolio, risk_manager, strategies)
         return
 
     while True:
-        run_all_cycles()
+        run_cycle(broker, portfolio, risk_manager, strategies)
         logger.info("Cycle complete, sleeping %ss", config.POLL_INTERVAL_SECONDS)
         time.sleep(config.POLL_INTERVAL_SECONDS)
 
