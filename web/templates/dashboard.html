@@ -213,9 +213,9 @@
   {% if chart %}
   <div class="chart-card sopena-card">
     <div class="hero-label">Equity today</div>
-    <div class="hero-value">${{ "%.2f"|format(chart.end_equity) }}</div>
+    <div class="hero-value">${{ "{:,.2f}".format(chart.end_equity) }}</div>
     <div class="hero-delta {{ 'delta-good' if chart.is_up else 'delta-bad' }}">
-      {{ '+' if chart.is_up else '-' }}${{ "%.2f"|format(chart.delta|abs) }}
+      {{ '+' if chart.is_up else '-' }}${{ "{:,.2f}".format(chart.delta|abs) }}
       ({{ '+' if chart.is_up else '-' }}{{ "%.2f"|format(chart.delta_pct|abs) }}%) today
     </div>
     <div class="chart-wrap" id="equity-chart-wrap">
@@ -238,7 +238,7 @@
   {% else %}
   <div class="chart-card sopena-card">
     <div class="hero-label">Equity today</div>
-    <div class="hero-value">${{ "%.2f"|format(equity) }}</div>
+    <div class="hero-value">${{ "{:,.2f}".format(equity) }}</div>
     <div class="empty-state">Not enough intraday history yet to chart &mdash; check back once the account has more activity.</div>
   </div>
   {% endif %}
@@ -246,11 +246,11 @@
   <div class="tiles">
     <div class="tile sopena-card">
       <div class="label">Equity</div>
-      <div class="value">${{ "%.2f"|format(equity) }}</div>
+      <div class="value">${{ "{:,.2f}".format(equity) }}</div>
     </div>
     <div class="tile sopena-card">
       <div class="label">Cash</div>
-      <div class="value">${{ "%.2f"|format(cash) }}</div>
+      <div class="value">${{ "{:,.2f}".format(cash) }}</div>
     </div>
     <div class="tile sopena-card">
       <div class="label">Exposure</div>
@@ -284,7 +284,7 @@
           <span class="badge {{ row.badge_class }}">{{ row.badge_text }}</span>
           <div class="reason">{{ row.reason }}</div>
         </td>
-        <td class="num">{{ "$%.2f"|format(row.price) if row.price is not none else "—" }}</td>
+        <td class="num">{{ "${:,.2f}".format(row.price) if row.price is not none else "—" }}</td>
         <td>
           {% if row.sparkline %}
           <svg class="sparkline" viewBox="0 0 {{ row.sparkline.width }} {{ row.sparkline.height }}" preserveAspectRatio="none">
@@ -296,9 +296,9 @@
           {% endif %}
         </td>
         {% if row.position %}
-        <td>{{ "%.4f"|format(row.position.qty) }} @ ${{ "%.2f"|format(row.position.avg_entry_price) }}</td>
+        <td>{{ "{:,.4f}".format(row.position.qty) }} @ ${{ "{:,.2f}".format(row.position.avg_entry_price) }}</td>
         <td class="num {{ 'delta-good' if row.position.unrealized_pl >= 0 else 'delta-bad' }}">
-          {{ '+' if row.position.unrealized_pl >= 0 else '-' }}${{ "%.2f"|format(row.position.unrealized_pl|abs) }}
+          {{ '+' if row.position.unrealized_pl >= 0 else '-' }}${{ "{:,.2f}".format(row.position.unrealized_pl|abs) }}
         </td>
         {% else %}
         <td class="reason">no position</td>
@@ -318,7 +318,7 @@
     <div class="tile sopena-card">
       <div class="label">Realized P&amp;L</div>
       <div class="value {{ 'delta-good' if performance.total_realized_pnl >= 0 else 'delta-bad' }}">
-        {{ '+' if performance.total_realized_pnl >= 0 else '-' }}${{ "%.2f"|format(performance.total_realized_pnl|abs) }}
+        {{ '+' if performance.total_realized_pnl >= 0 else '-' }}${{ "{:,.2f}".format(performance.total_realized_pnl|abs) }}
       </div>
     </div>
     <div class="tile sopena-card">
@@ -348,11 +348,11 @@
         <td>
           <span class="badge {{ 'buy' if e.side == 'buy' else 'sell' }}">{{ e.action }}</span>
         </td>
-        <td class="num">${{ "%.2f"|format(e.price) }}</td>
-        <td class="num">{{ "%.4f"|format(e.qty) }}</td>
+        <td class="num">${{ "{:,.2f}".format(e.price) }}</td>
+        <td class="num">{{ "{:,.4f}".format(e.qty) }}</td>
         {% if e.realized_pnl is not none %}
         <td class="num {{ 'delta-good' if e.is_win else 'delta-bad' }}">
-          {{ '+' if e.is_win else '-' }}${{ "%.2f"|format(e.realized_pnl|abs) }}
+          {{ '+' if e.is_win else '-' }}${{ "{:,.2f}".format(e.realized_pnl|abs) }}
         </td>
         {% else %}
         <td class="num reason">position opened</td>
@@ -404,7 +404,7 @@
       var scale = rect.width / viewWidth;
       tooltip.style.left = (p.x * scale) + 'px';
       tooltip.style.top = (p.y * (rect.height / viewHeight)) + 'px';
-      tooltip.querySelector('.val').textContent = '$' + p.equity.toFixed(2);
+      tooltip.querySelector('.val').textContent = '$' + p.equity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       tooltip.querySelector('.time').textContent = p.time_label;
       tooltip.style.opacity = 1;
     }
