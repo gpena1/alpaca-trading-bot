@@ -104,6 +104,53 @@ The strategy loses to buy-and-hold in both configurations, on both return and
 Sharpe. The regime filter — included specifically as downside protection — cost
 about 7 points of return over this sample.
 
+### Test 3 — Aggressive strategies with volatility-targeted sizing
+
+Three new strategies — an aggressive trend variant, a volatility-squeeze breakout,
+and a stretch reversion — run individually and combined, across a shared sizing
+layer with volatility targeting, a gross exposure cap, and a portfolio kill switch.
+Fifteen symbols, swept across three aggression multipliers.
+
+Out-of-sample:
+
+| Run | Return% | CAGR% | Sharpe | MaxDD% | Trades | Kills |
+|---|---|---|---|---|---|---|
+| aggressive_trend @ 1.0x | +6.9 | 2.7 | 0.38 | 9.9 | 83 | 0 |
+| squeeze_breakout @ 1.0x | −1.5 | −0.6 | −0.36 | 3.6 | 137 | 0 |
+| stretch_reversion @ 1.0x | +5.4 | 1.9 | 0.43 | 6.5 | 165 | 0 |
+| ALL THREE @ 1.0x | +0.4 | 0.2 | 0.06 | 12.3 | 325 | 0 |
+| ALL THREE @ 1.5x | +1.8 | 0.7 | 0.13 | 17.8 | 341 | 0 |
+| ALL THREE @ 2.0x | +11.7 | 4.6 | 0.39 | 21.5 | 344 | 0 |
+| **Buy and hold SPY** | **+57.0** | **20.2** | **1.26** | 18.7 | 0 | 0 |
+
+Every configuration trails the benchmark. The best combined book returns 11.7% at
+Sharpe 0.39 with a 21.5% drawdown, against SPY's 57.0% at Sharpe 1.26 with a
+*smaller* 18.7% drawdown. The two halves also disagree: `stretch_reversion` runs
+−0.9% in-sample and +5.4% out-of-sample, while `squeeze_breakout` runs +4.4%
+in-sample and −1.5% out-of-sample, and is the only component with negative Sharpe
+at every setting in the real half.
+
+**The leverage column in this test is not measuring leverage, and the rows are
+therefore not comparable to one another.** At 1.0x the book sat well below its
+gross exposure cap and carried idle cash, so raising the multiplier bought
+*exposure* rather than leverage — the 1.0x runs are diluted by cash drag rather
+than being a clean baseline. Absolute figures within a row are readable; the
+progression across rows is not.
+
+**That defect was caught by the harness, not by inspection of the code.** Pure
+leverage scales return and volatility together and therefore leaves Sharpe
+unchanged. Here Sharpe *rose* with the multiplier — 0.06 → 0.13 → 0.39 for the
+combined book, and 0.43 → 0.72 → 0.81 for `stretch_reversion`. A ratio that
+improves as position size grows is arithmetically impossible under real leverage,
+which is what identified the bug. It was fixed for Test 4, where the gross cap is
+held fixed: SPY's Sharpe there is exactly 1.31 at 1.0x, 1.5x, and 2.0x. That
+invariance is the proof the correction worked, and its absence here is the proof
+something was wrong.
+
+**The kill switch never fired.** `Kills = 0` across all twelve runs. It is
+therefore untested by this backtest, not validated by it — no conclusion about
+whether it works should be drawn from these results.
+
 ### Test 4 — Carver multi-speed continuous forecast
 
 A continuous-forecast trend system in the style of Rob Carver's *Systematic
