@@ -1,4 +1,4 @@
-from bot.strategies.base import Signal, SignalAction, Strategy
+from bot.strategies.base import Signal, Strategy, TargetPosition
 from bot.strategies.mean_reversion import MeanReversionStrategy
 from bot.strategies.momentum_breakout import MomentumBreakoutStrategy
 from bot.strategies.trend_following import TrendFollowingStrategy
@@ -11,7 +11,7 @@ STRATEGY_REGISTRY = {
 
 __all__ = [
     "Signal",
-    "SignalAction",
     "Strategy",
+    "TargetPosition",
     "STRATEGY_REGISTRY",
 ]

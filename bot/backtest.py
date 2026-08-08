@@ -1,23 +1,28 @@
-"""Backtest every live strategy against historical data before trusting it
-with real trades, via run_backtest().
+"""Backtest every live strategy against historical data via run_backtest().
 
-Walks bars forward with no lookahead -- each decision only ever sees bars
-up to and including "now" -- and reuses the exact same live decision logic
-(bot.main.build_strategies()), so the backtest can never silently drift
-from what's actually deployed. Applies 0.05% slippage and $0 commission
-(Alpaca is commission-free) to every simulated fill.
+Walks bars forward with no lookahead and reuses the exact live decision
+logic (bot.main.build_strategies()), so the backtest can't silently drift
+from what's deployed. Applies 0.05% slippage and $0 commission.
 
-Two deliberate deviations from the generic guide this backtest was
-originally built from:
+THREE CORRECTIONS over the previous version:
 
-1. Timeframe: every symbol backtests on config.BAR_TIMEFRAME_MINUTES
-   (15-min), matching what the live bot actually runs -- not the mixed
-   15-min/1-hour/4-hour split the guide suggested, which would validate a
-   different bot than the one in production.
-2. No "correlation filter": nothing in bot/risk_manager.py implements one
-   today. The combined-portfolio run reports performance under the real,
-   existing risk rules (per-symbol + total exposure caps) instead of a
-   feature that doesn't exist in this codebase.
+1. Sharpe annualisation was wrong for every equity symbol. The old code
+   used periods_per_year = (365.25 * 24 * 3600) / bar_seconds, i.e. it
+   assumed bars exist around the clock. That's true for crypto and false
+   for equities, which only print during the ~6.5h session. With 15-minute
+   bars, _bar_seconds() returns 900 (the median gap is intraday; overnight
+   and weekend gaps are ignored), so the annualisation factor came out
+   35,064 instead of ~6,550 -- inflating every equity Sharpe by
+   sqrt(35064/6550) = 2.3x. That is the entire explanation for the
+   USO "Sharpe 7.17" result. Now computed per symbol by asset class.
+
+2. Shorts are simulated. The old sim could only be long or flat, so it
+   could not evaluate the strategies as they now run.
+
+3. Walk-forward split. In-sample optimisation is how the RSI 20/80 and
+   breakout 80/150 parameters were chosen -- swept over the same window
+   they were then scored on. The split reports the second half untouched,
+   which is the only number worth acting on.
 
 Run: python3 -m bot.backtest
 """
@@ -25,7 +30,7 @@ Run: python3 -m bot.backtest
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 import matplotlib
@@ -35,23 +40,28 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 import config
-from bot.broker import Broker, is_crypto
+from bot.broker import Broker, daily_timeframe, is_crypto
 from bot.main import build_strategies
-from alpaca.data.timeframe import TimeFrame
+from bot.strategies.base import TargetPosition
 
 logging.basicConfig(level="INFO", format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("bot.backtest")
 
-SLIPPAGE_PCT = 0.0005  # 0.05%, applied against the strategy on every fill
+SLIPPAGE_PCT = 0.0005
 STARTING_CASH = 100_000.0
-BACKTEST_MONTHS = 6
+BACKTEST_YEARS = 3  # daily bars need years, not months, for a usable sample
 DRAWDOWN_FLAG_PCT = 15.0
 OUTPUT_CHART = "backtest_results.png"
+
+TRADING_DAYS_PER_YEAR = 252
+CRYPTO_DAYS_PER_YEAR = 365.25
+EQUITY_SESSION_SECONDS = 6.5 * 3600
 
 
 @dataclass
 class Trade:
     symbol: str
+    direction: str  # "long" or "short"
     entry_time: object
     entry_price: float
     exit_time: object
@@ -63,25 +73,39 @@ class Trade:
 @dataclass
 class SimResult:
     label: str
-    trades: list
-    equity_curve: list  # [(timestamp, equity), ...]
-    final_equity: float
-    open_unrealized: float
+    trades: list = field(default_factory=list)
+    equity_curve: list = field(default_factory=list)
+    final_equity: float = 0.0
 
 
 def _fill_price(price: float, is_buy: bool) -> float:
     return price * (1 + SLIPPAGE_PCT) if is_buy else price * (1 - SLIPPAGE_PCT)
 
 
-def fetch_backtest_bars(broker: Broker, symbol: str, months: int = BACKTEST_MONTHS) -> pd.DataFrame:
-    """Matches the live bot's actual timeframe (config.BAR_TIMEFRAME_MINUTES)
-    for every symbol. Requests the last `months` up to now, but the account's
-    data plan may not actually reach that recently -- callers should check
-    the returned range against what was requested rather than assume it."""
-    timeframe = TimeFrame(config.BAR_TIMEFRAME_MINUTES, TimeFrame.Minute.unit)
+def _bar_seconds(bars: pd.DataFrame) -> float:
+    diffs = bars.index.to_series().diff().dropna()
+    return diffs.median().total_seconds() if len(diffs) else 86400.0
+
+
+def periods_per_year(symbol: str, bars: pd.DataFrame) -> float:
+    """Bars per year, by asset class -- NOT by wall-clock time.
+
+    Crypto trades continuously, so calendar time is the right divisor.
+    Equities print bars only during the session, so a 15-minute equity bar
+    is ~26/day x 252 days, not 96/day x 365.
+    """
+    secs = _bar_seconds(bars)
+    if is_crypto(symbol):
+        return (CRYPTO_DAYS_PER_YEAR * 24 * 3600) / secs
+    if secs >= 0.9 * 86400:  # daily or coarser
+        return TRADING_DAYS_PER_YEAR
+    return TRADING_DAYS_PER_YEAR * (EQUITY_SESSION_SECONDS / secs)
+
+
+def fetch_backtest_bars(broker: Broker, symbol: str, years: int = BACKTEST_YEARS) -> pd.DataFrame:
     end = datetime.now(timezone.utc)
-    start = end - timedelta(days=months * 30.44)
-    return broker.get_bars_range(symbol, is_crypto(symbol), timeframe, start, end)
+    start = end - timedelta(days=int(years * 365.25))
+    return broker.get_bars_range(symbol, is_crypto(symbol), daily_timeframe(), start, end)
 
 
 def simulate_symbol(
@@ -91,148 +115,84 @@ def simulate_symbol(
     starting_cash: float = STARTING_CASH,
     allocation_pct: float = config.MAX_ALLOCATION_PCT_PER_SYMBOL,
     stop_loss_pct: float = config.STOP_LOSS_PCT,
-    take_profit_pct: float = config.TAKE_PROFIT_PCT,
+    label: str | None = None,
 ) -> SimResult:
-    """Single-symbol backtest: the strategy gets the full starting_cash to
-    itself (no other symbols competing for capital) -- see simulate_combined
-    for the shared-capital, multi-symbol version."""
+    """Single-symbol long/short backtest.
+
+    Sizing is off EQUITY, not remaining cash -- the live RiskManager sizes
+    from account equity, and the old version's `cash * allocation_pct`
+    quietly shrank position sizes after every loss, which is not what the
+    deployed bot does.
+    """
+    take_profit_pct = config.TAKE_PROFIT_PCT_BY_STRATEGY.get(strategy.name)
     cash = starting_cash
-    qty = 0.0
+    qty = 0.0  # signed
     entry_price = 0.0
     entry_time = None
     trades: list[Trade] = []
     equity_curve: list[tuple] = []
 
+    def equity_at(price: float) -> float:
+        return cash + qty * price
+
+    def close(price: float, ts):
+        nonlocal cash, qty, entry_price, entry_time
+        fill = _fill_price(price, is_buy=qty < 0)
+        pnl = (fill - entry_price) * qty
+        cash += qty * fill
+        trades.append(
+            Trade(symbol, "long" if qty > 0 else "short", entry_time, entry_price, ts, fill, abs(qty), pnl)
+        )
+        qty, entry_price, entry_time = 0.0, 0.0, None
+
     for i in range(1, len(bars)):
         window = bars.iloc[: i + 1]
-        current_time = window.index[-1]
-        current_price = float(window["close"].iloc[-1])
+        ts = window.index[-1]
+        price = float(window["close"].iloc[-1])
 
-        if qty > 0 and entry_price > 0:
-            change_pct = (current_price - entry_price) / entry_price
-            if change_pct <= -stop_loss_pct or change_pct >= take_profit_pct:
-                fill = _fill_price(current_price, is_buy=False)
-                pnl = (fill - entry_price) * qty
-                cash += fill * qty
-                trades.append(Trade(symbol, entry_time, entry_price, current_time, fill, qty, pnl))
-                qty, entry_price, entry_time = 0.0, 0.0, None
-                equity_curve.append((current_time, cash))
+        if qty != 0 and entry_price > 0:
+            change_pct = (price - entry_price) / entry_price
+            if qty < 0:
+                change_pct = -change_pct
+            hit_stop = change_pct <= -stop_loss_pct
+            hit_target = take_profit_pct is not None and change_pct >= take_profit_pct
+            if hit_stop or hit_target:
+                close(price, ts)
+                equity_curve.append((ts, equity_at(price)))
                 continue
 
         signal = strategy.generate_signal(window)
+        target = signal.target
+        current = (
+            TargetPosition.LONG if qty > 0 else TargetPosition.SHORT if qty < 0 else TargetPosition.FLAT
+        )
 
-        if signal.action.value == "buy" and qty == 0:
-            fill = _fill_price(current_price, is_buy=True)
-            new_qty = (cash * allocation_pct) / fill
-            if new_qty > 0:
-                cash -= fill * new_qty
-                qty, entry_price, entry_time = new_qty, fill, current_time
-        elif signal.action.value == "sell" and qty > 0:
-            fill = _fill_price(current_price, is_buy=False)
-            pnl = (fill - entry_price) * qty
-            cash += fill * qty
-            trades.append(Trade(symbol, entry_time, entry_price, current_time, fill, qty, pnl))
-            qty, entry_price, entry_time = 0.0, 0.0, None
+        if target != TargetPosition.HOLD and target != current:
+            if qty != 0:
+                close(price, ts)
+            if target in (TargetPosition.LONG, TargetPosition.SHORT):
+                equity = cash
+                target_dollars = equity * allocation_pct
+                fill = _fill_price(price, is_buy=target == TargetPosition.LONG)
+                new_qty = target_dollars / fill
+                if target == TargetPosition.SHORT:
+                    new_qty = -new_qty
+                if new_qty != 0:
+                    cash -= new_qty * fill
+                    qty, entry_price, entry_time = new_qty, fill, ts
 
-        equity_curve.append((current_time, cash + qty * current_price))
+        equity_curve.append((ts, equity_at(price)))
 
-    final_price = float(bars["close"].iloc[-1]) if len(bars) else starting_cash
-    open_unrealized = (final_price - entry_price) * qty if qty > 0 else 0.0
-    final_equity = cash + qty * final_price
-
-    return SimResult(symbol, trades, equity_curve, final_equity, open_unrealized)
-
-
-def simulate_combined(
-    strategies: dict,
-    symbol_bars: dict,
-    starting_cash: float = STARTING_CASH,
-    allocation_pct: float = config.MAX_ALLOCATION_PCT_PER_SYMBOL,
-    max_total_exposure_pct: float = config.MAX_TOTAL_EXPOSURE_PCT,
-    stop_loss_pct: float = config.STOP_LOSS_PCT,
-    take_profit_pct: float = config.TAKE_PROFIT_PCT,
-) -> SimResult:
-    """All 5 symbols sharing one capital pool and one exposure cap, mirroring
-    RiskManager's real sizing logic (allocation_pct capped by remaining
-    exposure room) instead of just summing 5 independent single-symbol runs,
-    which would misrepresent how the account's real exposure cap behaves
-    when multiple positions are open at once."""
-    cash = starting_cash
-    positions: dict[str, dict] = {}
-    latest_price: dict[str, float] = {}
-    trades: list[Trade] = []
-    equity_curve: list[tuple] = []
-
-    events = []
-    for symbol, bars in symbol_bars.items():
-        for idx in range(len(bars)):
-            events.append((bars.index[idx], symbol, idx))
-    events.sort(key=lambda e: e[0])
-
-    def current_equity() -> float:
-        return cash + sum(p["qty"] * latest_price.get(s, p["entry_price"]) for s, p in positions.items())
-
-    for ts, symbol, idx in events:
-        bars = symbol_bars[symbol]
-        window = bars.iloc[: idx + 1]
-        current_price = float(window["close"].iloc[-1])
-        latest_price[symbol] = current_price
-
-        pos = positions.get(symbol)
-        if pos:
-            change_pct = (current_price - pos["entry_price"]) / pos["entry_price"]
-            if change_pct <= -stop_loss_pct or change_pct >= take_profit_pct:
-                fill = _fill_price(current_price, is_buy=False)
-                pnl = (fill - pos["entry_price"]) * pos["qty"]
-                cash += fill * pos["qty"]
-                trades.append(Trade(symbol, pos["entry_time"], pos["entry_price"], ts, fill, pos["qty"], pnl))
-                del positions[symbol]
-                equity_curve.append((ts, current_equity()))
-                continue
-
-        if idx == 0:
-            equity_curve.append((ts, current_equity()))
-            continue
-
-        signal = strategies[symbol].generate_signal(window)
-
-        if signal.action.value == "buy" and symbol not in positions:
-            equity = current_equity()
-            exposure = sum(p["qty"] * latest_price.get(s, p["entry_price"]) for s, p in positions.items())
-            room_left_pct = max_total_exposure_pct - (exposure / equity if equity > 0 else 1.0)
-            alloc_pct = min(allocation_pct, max(room_left_pct, 0.0))
-            target_dollars = equity * alloc_pct
-            if target_dollars > 0:
-                fill = _fill_price(current_price, is_buy=True)
-                qty = target_dollars / fill
-                if qty > 0 and cash >= fill * qty:
-                    cash -= fill * qty
-                    positions[symbol] = {"qty": qty, "entry_price": fill, "entry_time": ts}
-        elif signal.action.value == "sell" and symbol in positions:
-            pos = positions[symbol]
-            fill = _fill_price(current_price, is_buy=False)
-            pnl = (fill - pos["entry_price"]) * pos["qty"]
-            cash += fill * pos["qty"]
-            trades.append(Trade(symbol, pos["entry_time"], pos["entry_price"], ts, fill, pos["qty"], pnl))
-            del positions[symbol]
-
-        equity_curve.append((ts, current_equity()))
-
-    open_unrealized = sum(
-        (latest_price.get(s, p["entry_price"]) - p["entry_price"]) * p["qty"] for s, p in positions.items()
-    )
-    return SimResult("COMBINED", trades, equity_curve, current_equity(), open_unrealized)
+    final_price = float(bars["close"].iloc[-1]) if len(bars) else 0.0
+    return SimResult(label or symbol, trades, equity_curve, cash + qty * final_price)
 
 
-def compute_metrics(result: SimResult, starting_cash: float, bar_seconds: float) -> dict:
+def compute_metrics(result: SimResult, starting_cash: float, bars_per_year: float) -> dict:
     trades = result.trades
-    total_trades = len(trades)
+    total = len(trades)
     wins = [t for t in trades if t.pnl > 0]
     losses = [t for t in trades if t.pnl <= 0]
 
-    win_rate = (len(wins) / total_trades * 100) if total_trades else None
-    avg_win = (sum(t.pnl for t in wins) / len(wins)) if wins else 0.0
-    avg_loss = (sum(t.pnl for t in losses) / len(losses)) if losses else 0.0
     gross_win = sum(t.pnl for t in wins)
     gross_loss = abs(sum(t.pnl for t in losses))
     if gross_loss > 0:
@@ -241,65 +201,53 @@ def compute_metrics(result: SimResult, starting_cash: float, bar_seconds: float)
         profit_factor = float("inf") if gross_win > 0 else 0.0
 
     equities = [e for _, e in result.equity_curve] or [starting_cash]
-    peak = equities[0]
-    max_dd = 0.0
+    peak, max_dd = equities[0], 0.0
     for e in equities:
         peak = max(peak, e)
         if peak > 0:
             max_dd = max(max_dd, (peak - e) / peak)
 
     returns = pd.Series(equities).pct_change().dropna()
-    periods_per_year = (365.25 * 24 * 3600) / bar_seconds if bar_seconds else 252
     if len(returns) > 1 and returns.std() > 0:
-        sharpe = (returns.mean() / returns.std()) * (periods_per_year**0.5)
+        sharpe = (returns.mean() / returns.std()) * (bars_per_year**0.5)
     else:
         sharpe = 0.0
 
-    total_return_pct = (result.final_equity - starting_cash) / starting_cash * 100
-
     return {
         "label": result.label,
-        "total_trades": total_trades,
-        "win_rate": win_rate,
-        "avg_win": avg_win,
-        "avg_loss": avg_loss,
+        "total_trades": total,
+        "shorts": sum(1 for t in trades if t.direction == "short"),
+        "win_rate": (len(wins) / total * 100) if total else None,
         "profit_factor": profit_factor,
         "max_drawdown_pct": max_dd * 100,
         "sharpe_ratio": sharpe,
-        "total_return_pct": total_return_pct,
+        "total_return_pct": (result.final_equity - starting_cash) / starting_cash * 100,
         "final_equity": result.final_equity,
-        "open_unrealized": result.open_unrealized,
     }
 
 
-def _bar_seconds(bars: pd.DataFrame) -> float:
-    diffs = bars.index.to_series().diff().dropna()
-    return diffs.median().total_seconds() if len(diffs) else 900.0
-
-
-def print_summary_table(metrics_list: list[dict]):
-    headers = ["Symbol", "Trades", "Win%", "AvgWin", "AvgLoss", "ProfFac", "MaxDD%", "Sharpe", "Return%"]
-    widths = [12, 7, 7, 9, 9, 8, 8, 8, 9]
+def print_summary_table(metrics_list: list[dict], title: str):
+    headers = ["Symbol", "Trades", "Short", "Win%", "ProfFac", "MaxDD%", "Sharpe", "Return%"]
+    widths = [26, 7, 6, 7, 8, 8, 8, 9]
 
     def fmt_row(cells):
         return " | ".join(str(c).rjust(w) for c, w in zip(cells, widths))
 
-    print("\n" + "=" * 90)
-    print("BACKTEST SUMMARY".center(90))
-    print("=" * 90)
+    print("\n" + "=" * 92)
+    print(title.center(92))
+    print("=" * 92)
     print(fmt_row(headers))
-    print("-" * 90)
+    print("-" * 92)
     for m in metrics_list:
-        win_rate = f"{m['win_rate']:.0f}" if m["win_rate"] is not None else "—"
+        win = f"{m['win_rate']:.0f}" if m["win_rate"] is not None else "-"
         pf = "inf" if m["profit_factor"] == float("inf") else f"{m['profit_factor']:.2f}"
         print(
             fmt_row(
                 [
-                    m["label"],
+                    m["label"][:26],
                     m["total_trades"],
-                    win_rate,
-                    f"${m['avg_win']:.0f}",
-                    f"${m['avg_loss']:.0f}",
+                    m["shorts"],
+                    win,
                     pf,
                     f"{m['max_drawdown_pct']:.1f}",
                     f"{m['sharpe_ratio']:.2f}",
@@ -307,7 +255,7 @@ def print_summary_table(metrics_list: list[dict]):
                 ]
             )
         )
-    print("=" * 90)
+    print("=" * 92)
 
 
 def plot_equity_curves(results: list[SimResult], out_path: str = OUTPUT_CHART):
@@ -317,9 +265,8 @@ def plot_equity_curves(results: list[SimResult], out_path: str = OUTPUT_CHART):
             continue
         times = [t for t, _ in result.equity_curve]
         equities = [e for _, e in result.equity_curve]
-        ax.plot(times, equities, label=result.label, linewidth=1.6 if result.label == "COMBINED" else 1.0)
-
-    ax.set_title(f"Backtest Equity Curves ({BACKTEST_MONTHS}-month window)")
+        ax.plot(times, equities, label=result.label, linewidth=1.0)
+    ax.set_title(f"Backtest equity curves ({BACKTEST_YEARS}y, daily bars)")
     ax.set_xlabel("Date")
     ax.set_ylabel("Equity ($)")
     ax.legend(loc="upper left", fontsize=8)
@@ -335,65 +282,60 @@ def run_backtest():
     broker = Broker()
     strategies = build_strategies()
 
-    symbol_bars = {}
-    results = []
-    metrics_list = []
-    warnings = []
-    requested_days = BACKTEST_MONTHS * 30.44
+    all_results, in_sample, out_sample, warnings = [], [], [], []
 
     for symbol in config.SYMBOLS:
-        print(f"Fetching {BACKTEST_MONTHS} months of {config.BAR_TIMEFRAME_MINUTES}-min bars for {symbol}...")
+        print(f"Fetching {BACKTEST_YEARS}y of daily bars for {symbol}...")
         bars = fetch_backtest_bars(broker, symbol)
-        if bars.empty or len(bars) < 30:
+        if bars.empty or len(bars) < 150:
             print(f"  {symbol}: insufficient data ({len(bars)} bars) -- skipped")
             continue
 
-        actual_days = (bars.index[-1] - bars.index[0]).total_seconds() / 86400
-        if actual_days < requested_days * 0.9:
-            print(
-                f"  WARNING: only got {bars.index[0].date()} to {bars.index[-1].date()} "
-                f"({actual_days:.0f} days) -- shorter than the requested {BACKTEST_MONTHS} months, "
-                f"and not necessarily the most recent data. Results reflect this window, not 'the last 6 months.'"
-            )
-
-        symbol_bars[symbol] = bars
+        print(f"  {symbol}: {len(bars)} bars, {bars.index[0].date()} to {bars.index[-1].date()}")
         strategy = strategies[symbol]
-        result = simulate_symbol(symbol, bars, strategy)
-        metrics = compute_metrics(result, STARTING_CASH, _bar_seconds(bars))
-        metrics["label"] = f"{symbol} [{strategy.name}]"
-        results.append(result)
-        metrics_list.append(metrics)
+        ppy = periods_per_year(symbol, bars)
 
-        if metrics["sharpe_ratio"] < 0:
-            warnings.append(f"{symbol} [{strategy.name}]: NEGATIVE Sharpe ratio ({metrics['sharpe_ratio']:.2f})")
-        if metrics["max_drawdown_pct"] > DRAWDOWN_FLAG_PCT:
+        full = simulate_symbol(symbol, bars, strategy, label=f"{symbol} [{strategy.name}]")
+        all_results.append(full)
+
+        # Walk-forward: the second half is the only untouched sample if any
+        # parameter in config was ever chosen by looking at this data.
+        split = len(bars) // 2
+        first = simulate_symbol(symbol, bars.iloc[:split], strategy, label=f"{symbol} 1st half")
+        second = simulate_symbol(symbol, bars.iloc[split:], strategy, label=f"{symbol} 2nd half")
+        in_sample.append(compute_metrics(first, STARTING_CASH, ppy))
+        oos = compute_metrics(second, STARTING_CASH, ppy)
+        out_sample.append(oos)
+
+        # Flag on the out-of-sample half only. The full-period run includes the
+        # in-sample data any parameter was fitted against, so a strong first
+        # half can mask a losing second half.
+        flag_label = f"{symbol} [{strategy.name}] out-of-sample"
+        if oos["sharpe_ratio"] < 0:
+            warnings.append(f"{flag_label}: NEGATIVE Sharpe ({oos['sharpe_ratio']:.2f})")
+        if oos["max_drawdown_pct"] > DRAWDOWN_FLAG_PCT:
             warnings.append(
-                f"{symbol} [{strategy.name}]: max drawdown {metrics['max_drawdown_pct']:.1f}% "
+                f"{flag_label}: max drawdown {oos['max_drawdown_pct']:.1f}% "
                 f"exceeds {DRAWDOWN_FLAG_PCT:.0f}%"
             )
 
-    if symbol_bars:
-        combined_result = simulate_combined(strategies, symbol_bars)
-        combined_metrics = compute_metrics(combined_result, STARTING_CASH, _bar_seconds(next(iter(symbol_bars.values()))))
-        results.append(combined_result)
-        metrics_list.append(combined_metrics)
-        if combined_metrics["sharpe_ratio"] < 0:
-            warnings.append(f"COMBINED portfolio: NEGATIVE Sharpe ratio ({combined_metrics['sharpe_ratio']:.2f})")
-        if combined_metrics["max_drawdown_pct"] > DRAWDOWN_FLAG_PCT:
-            warnings.append(f"COMBINED portfolio: max drawdown {combined_metrics['max_drawdown_pct']:.1f}% exceeds {DRAWDOWN_FLAG_PCT:.0f}%")
-
-    print_summary_table(metrics_list)
-    if results:
-        plot_equity_curves(results)
+    if in_sample:
+        print_summary_table(in_sample, "FIRST HALF (in-sample -- do not trust)")
+        print_summary_table(out_sample, "SECOND HALF (out-of-sample -- this is the real number)")
+        plot_equity_curves(all_results)
 
     if warnings:
-        print("\n⚠ FLAGGED -- adjust parameters before trusting these strategies live:")
+        print("\nFLAGGED -- adjust before trusting these strategies:")
         for w in warnings:
             print(f"  - {w}")
     else:
-        print("\nNo strategies flagged: all Sharpe ratios positive, all drawdowns within the 15% threshold.")
+        print("\nNo strategies flagged.")
 
-    return metrics_list
+    print(
+        "\nNote: paper/backtest results exclude borrow costs on shorts, real fill "
+        "quality, and market impact. Discount accordingly."
+    )
+    return out_sample
 
 
 if __name__ == "__main__":

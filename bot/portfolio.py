@@ -1,4 +1,10 @@
-"""Read-only view of account state: equity, cash, and per-symbol exposure."""
+"""Read-only view of account state: equity, cash, and per-symbol exposure.
+
+Position quantities are SIGNED -- Alpaca reports a short as a negative qty
+and a negative market_value. Exposure therefore has to be computed on
+absolute values, or a $10k long and a $10k short net out to "zero
+exposure" and the caps stop protecting anything.
+"""
 
 from __future__ import annotations
 
@@ -13,10 +19,14 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PositionInfo:
     symbol: str
-    qty: float
-    market_value: float
+    qty: float  # signed: positive = long, negative = short
+    market_value: float  # signed
     avg_entry_price: float
     unrealized_pl: float
+
+    @property
+    def is_short(self) -> bool:
+        return self.qty < 0
 
 
 class Portfolio:
@@ -42,7 +52,7 @@ class Portfolio:
         )
 
     def total_exposure(self) -> float:
-        return sum(float(p.market_value) for p in self.broker.get_positions())
+        return sum(abs(float(p.market_value)) for p in self.broker.get_positions())
 
     def exposure_pct(self) -> float:
         equity = self.equity()
@@ -55,17 +65,19 @@ class Portfolio:
         cash = self.cash()
         positions = self.broker.get_positions()
         logger.info(
-            "Account equity=$%.2f cash=$%.2f exposure=%.1f%% open_positions=%d",
+            "Account equity=$%.2f cash=$%.2f gross_exposure=%.1f%% open_positions=%d",
             equity,
             cash,
             self.exposure_pct() * 100,
             len(positions),
         )
         for p in positions:
+            qty = float(p.qty)
             logger.info(
-                "  %s qty=%s mv=$%.2f unrealized_pl=$%.2f",
+                "  %s %s qty=%s mv=$%.2f unrealized_pl=$%.2f",
                 p.symbol,
-                p.qty,
+                "SHORT" if qty < 0 else "LONG",
+                qty,
                 float(p.market_value),
                 float(p.unrealized_pl),
             )

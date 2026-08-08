@@ -1,6 +1,9 @@
-"""Entry point: polls SPY, QQQ, BTC/USD, GLD, and USO on a fixed interval,
-runs each symbol's assigned strategy, and routes any signal through the
-risk manager before placing an order.
+"""Entry point: evaluates each symbol's target position once per day.
+
+The supported deployment is a scheduled `python3 -m bot.main --once`
+after the close -- with daily bars there is nothing to gain from a
+polling loop, and one short-lived job is cheaper and more reliable than
+an always-on process.
 """
 
 import argparse
@@ -21,10 +24,14 @@ logger = logging.getLogger("bot.main")
 
 
 def build_strategies():
+    """Each strategy is told whether its symbol can be shorted. Alpaca does
+    not support shorting crypto, so BTC/USD gets allow_short=False and its
+    SHORT targets resolve to FLAT."""
     strategies = {}
     for symbol, strategy_key in config.STRATEGY_MAP.items():
         strategy_cls = STRATEGY_REGISTRY[strategy_key]
-        strategies[symbol] = strategy_cls()
+        allow_short = config.ALLOW_SHORTING and symbol in config.SHORTABLE_SYMBOLS
+        strategies[symbol] = strategy_cls(allow_short=allow_short)
     return strategies
 
 
@@ -48,26 +55,40 @@ def run_cycle(broker: Broker, portfolio: Portfolio, risk_manager: RiskManager, s
             current_price = float(bars["close"].iloc[-1])
 
             logger.info(
-                "%s [%s]: %s (%s) @ %.2f",
+                "%s [%s]: target=%s (%s) @ %.2f",
                 symbol,
                 strategy.name,
-                signal.action.value.upper(),
+                signal.target.value.upper(),
                 signal.reason,
                 current_price,
             )
 
-            decision = risk_manager.evaluate(symbol, signal, current_price)
-            if decision is None:
+            decisions = risk_manager.evaluate(symbol, signal, current_price, strategy.name)
+            if not decisions:
                 continue
 
-            broker.submit_market_order(decision.symbol, decision.qty, decision.side)
-            logger.info(
-                "%s: order submitted %s qty=%s reason=%s",
-                symbol,
-                decision.side.value,
-                decision.qty,
-                decision.reason,
-            )
+            # Any resting protective stop belongs to the position we're
+            # about to change. Cancel first, or it survives its position.
+            broker.cancel_open_orders_for(symbol)
+
+            for decision in decisions:
+                broker.submit_market_order(decision.symbol, decision.qty, decision.side)
+                logger.info(
+                    "%s: %s qty=%s reason=%s",
+                    symbol,
+                    decision.side.value,
+                    decision.qty,
+                    decision.reason,
+                )
+                if decision.is_entry and decision.stop_price and config.USE_NATIVE_STOP_ORDERS:
+                    from alpaca.trading.enums import OrderSide
+
+                    protective_side = (
+                        OrderSide.SELL if decision.side == OrderSide.BUY else OrderSide.BUY
+                    )
+                    broker.submit_stop_order(
+                        symbol, decision.qty, protective_side, decision.stop_price
+                    )
         except Exception:
             logger.exception("%s: error during cycle, skipping this symbol", symbol)
 
@@ -77,17 +98,17 @@ def main():
     parser.add_argument(
         "--once",
         action="store_true",
-        help="Run a single cycle and exit, instead of looping forever. "
-        "Used for externally-scheduled invocations (e.g. a cloud cron trigger) "
-        "where the scheduler itself provides the polling cadence.",
+        help="Run a single cycle and exit. This is the intended mode -- "
+        "schedule it once per day after the close.",
     )
     args = parser.parse_args()
 
     logger.info(
-        "Starting trading bot | base_url=%s paper=%s symbols=%s mode=%s",
+        "Starting trading bot | base_url=%s paper=%s timeframe=%s shorting=%s mode=%s",
         config.ALPACA_BASE_URL,
         config.IS_PAPER,
-        config.SYMBOLS,
+        config.BAR_TIMEFRAME,
+        config.ALLOW_SHORTING,
         "once" if args.once else "loop",
     )
 

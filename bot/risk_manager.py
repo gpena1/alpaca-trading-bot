@@ -1,10 +1,16 @@
-"""Turns a strategy Signal into a concrete, risk-checked order decision.
+"""Turns a strategy's target position state into risk-checked orders.
 
 Responsibilities:
+  - reconcile the current signed position against the strategy's target
   - position sizing via fixed-fractional allocation per symbol
-  - per-symbol and total-portfolio exposure caps
-  - stop-loss / take-profit exits that override the strategy signal
-  - no shorting: SELL only closes an existing long, never opens a short
+  - per-symbol and total-portfolio exposure caps, using ABSOLUTE value so
+    a long and a short don't net out to "no exposure"
+  - stop-loss / take-profit exits, sign-aware for shorts
+  - protective stop prices for native GTC stop orders
+
+Position flips (long -> short or short -> long) are emitted as TWO
+decisions: close, then open. Alpaca rejects a single order that crosses
+through zero on equities, so this has to be explicit.
 """
 
 from __future__ import annotations
@@ -16,7 +22,7 @@ from alpaca.trading.enums import OrderSide
 
 import config
 from bot.portfolio import Portfolio
-from bot.strategies.base import Signal, SignalAction
+from bot.strategies.base import Signal, TargetPosition
 
 logger = logging.getLogger(__name__)
 
@@ -27,78 +33,146 @@ class OrderDecision:
     side: OrderSide
     qty: float
     reason: str
+    # Price for a protective stop order to submit alongside an entry.
+    # None for closing orders, which need no protection.
+    stop_price: float | None = None
+    is_entry: bool = False
+
+
+def _state_of(qty: float) -> TargetPosition:
+    if qty > 0:
+        return TargetPosition.LONG
+    if qty < 0:
+        return TargetPosition.SHORT
+    return TargetPosition.FLAT
 
 
 class RiskManager:
     def __init__(self, portfolio: Portfolio):
         self.portfolio = portfolio
 
-    def evaluate(self, symbol: str, signal: Signal, current_price: float) -> OrderDecision | None:
+    def evaluate(
+        self,
+        symbol: str,
+        signal: Signal,
+        current_price: float,
+        strategy_name: str,
+    ) -> list[OrderDecision]:
         position = self.portfolio.position_for(symbol)
+        current_qty = position.qty if position else 0.0
+        current_state = _state_of(current_qty)
 
-        stop_take_decision = self._check_stop_take(symbol, position, current_price)
-        if stop_take_decision:
-            return stop_take_decision
+        exit_decision = self._check_stop_take(symbol, position, current_price, strategy_name)
+        if exit_decision:
+            return [exit_decision]
 
-        if signal.action == SignalAction.BUY:
-            return self._evaluate_buy(symbol, signal, position, current_price)
-        if signal.action == SignalAction.SELL:
-            return self._evaluate_sell(symbol, signal, position)
-        return None
+        target = signal.target
+        if target == TargetPosition.HOLD:
+            return []
+        if target == TargetPosition.SHORT and not self._can_short(symbol):
+            logger.debug("%s: SHORT target degraded to FLAT (not shortable)", symbol)
+            target = TargetPosition.FLAT
+        if target == current_state:
+            return []
 
-    def _check_stop_take(self, symbol, position, current_price: float) -> OrderDecision | None:
-        if position is None or position.qty <= 0:
+        decisions: list[OrderDecision] = []
+
+        if current_state != TargetPosition.FLAT:
+            decisions.append(
+                OrderDecision(
+                    symbol=symbol,
+                    side=OrderSide.SELL if current_qty > 0 else OrderSide.BUY,
+                    qty=abs(current_qty),
+                    reason=f"closing {current_state.value} to reach target {target.value}",
+                )
+            )
+
+        if target in (TargetPosition.LONG, TargetPosition.SHORT):
+            entry = self._build_entry(symbol, target, signal, current_price, closing_qty=abs(current_qty))
+            if entry:
+                decisions.append(entry)
+
+        return decisions
+
+    def _can_short(self, symbol: str) -> bool:
+        return config.ALLOW_SHORTING and symbol in config.SHORTABLE_SYMBOLS
+
+    def _check_stop_take(
+        self, symbol: str, position, current_price: float, strategy_name: str
+    ) -> OrderDecision | None:
+        """Backstop only. Real protection is the native GTC stop submitted at
+        entry -- this catches the gap between daily runs for crypto and any
+        stop that failed to register."""
+        if position is None or position.qty == 0:
             return None
 
         entry = position.avg_entry_price
         if entry <= 0:
             return None
 
+        is_long = position.qty > 0
+        # For a short, a rising price is the loss -- flip the sign.
         change_pct = (current_price - entry) / entry
+        if not is_long:
+            change_pct = -change_pct
+
+        closing_side = OrderSide.SELL if is_long else OrderSide.BUY
 
         if change_pct <= -config.STOP_LOSS_PCT:
             return OrderDecision(
                 symbol,
-                OrderSide.SELL,
-                position.qty,
-                f"stop-loss triggered: {change_pct:.1%} <= -{config.STOP_LOSS_PCT:.0%}",
+                closing_side,
+                abs(position.qty),
+                f"stop-loss: {change_pct:.1%} <= -{config.STOP_LOSS_PCT:.0%}",
             )
-        if change_pct >= config.TAKE_PROFIT_PCT:
+
+        take_profit = config.TAKE_PROFIT_PCT_BY_STRATEGY.get(strategy_name)
+        if take_profit is not None and change_pct >= take_profit:
             return OrderDecision(
                 symbol,
-                OrderSide.SELL,
-                position.qty,
-                f"take-profit triggered: {change_pct:.1%} >= {config.TAKE_PROFIT_PCT:.0%}",
+                closing_side,
+                abs(position.qty),
+                f"take-profit: {change_pct:.1%} >= {take_profit:.0%}",
             )
         return None
 
-    def _evaluate_buy(self, symbol, signal: Signal, position, current_price: float) -> OrderDecision | None:
-        if position is not None and position.qty > 0:
-            logger.debug("%s: BUY signal ignored, already holding a position", symbol)
-            return None
-
+    def _build_entry(
+        self,
+        symbol: str,
+        target: TargetPosition,
+        signal: Signal,
+        current_price: float,
+        closing_qty: float,
+    ) -> OrderDecision | None:
         equity = self.portfolio.equity()
-        if equity <= 0:
+        if equity <= 0 or current_price <= 0:
             return None
 
-        room_left_pct = config.MAX_TOTAL_EXPOSURE_PCT - self.portfolio.exposure_pct()
+        # Exposure freed by the close we're about to submit counts as room.
+        exposure_now = self.portfolio.exposure_pct()
+        freed_pct = (closing_qty * current_price) / equity if closing_qty else 0.0
+        room_left_pct = config.MAX_TOTAL_EXPOSURE_PCT - (exposure_now - freed_pct)
         if room_left_pct <= 0:
-            logger.info("%s: BUY skipped, total exposure cap reached", symbol)
+            logger.info("%s: entry skipped, total exposure cap reached", symbol)
             return None
 
         allocation_pct = min(config.MAX_ALLOCATION_PCT_PER_SYMBOL, room_left_pct)
-        target_dollars = equity * allocation_pct
-        if target_dollars <= 0 or current_price <= 0:
-            return None
-
-        qty = round(target_dollars / current_price, 6)
+        qty = round((equity * allocation_pct) / current_price, 6)
         if qty <= 0:
             return None
 
-        return OrderDecision(symbol, OrderSide.BUY, qty, signal.reason)
+        if target == TargetPosition.LONG:
+            side = OrderSide.BUY
+            stop_price = round(current_price * (1 - config.STOP_LOSS_PCT), 2)
+        else:
+            side = OrderSide.SELL
+            stop_price = round(current_price * (1 + config.STOP_LOSS_PCT), 2)
 
-    def _evaluate_sell(self, symbol, signal: Signal, position) -> OrderDecision | None:
-        if position is None or position.qty <= 0:
-            logger.debug("%s: SELL signal ignored, no open position to close", symbol)
-            return None
-        return OrderDecision(symbol, OrderSide.SELL, position.qty, signal.reason)
+        return OrderDecision(
+            symbol=symbol,
+            side=side,
+            qty=qty,
+            reason=signal.reason,
+            stop_price=stop_price,
+            is_entry=True,
+        )
