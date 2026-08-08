@@ -104,7 +104,58 @@ The strategy loses to buy-and-hold in both configurations, on both return and
 Sharpe. The regime filter — included specifically as downside protection — cost
 about 7 points of return over this sample.
 
----
+### Test 4 — Carver multi-speed continuous forecast
+
+A continuous-forecast trend system in the style of Rob Carver's *Systematic
+Trading*: several EWMA speed pairs, each scaled by its published forecast scalar
+and capped at ±20, combined into one number that sizes the position by both
+conviction and inverse volatility. The scalars are the published values, not
+fitted to this sample. Five symbols (SPY, QQQ, IWM, EFA, TLT), swept across three
+aggression multipliers, benchmarked against SPY at *matched leverage*.
+
+Out-of-sample:
+
+| Run | Return% | CAGR% | Sharpe | MaxDD% | Trades | Shorts |
+|---|---|---|---|---|---|---|
+| carver_trend @ 1.0x | +1.0 | 0.5 | 0.20 | 2.9 | 126 | 63 |
+| carver_trend @ 1.5x | −0.1 | −0.0 | 0.02 | 6.2 | 125 | 64 |
+| carver_trend @ 2.0x | −0.0 | −0.0 | 0.03 | 8.4 | 125 | 64 |
+| **SPY @ 1.0x** | **46.4** | **22.1** | **1.31** | 18.7 | 0 | 0 |
+| **SPY @ 1.5x** | **73.9** | **33.6** | **1.31** | 27.0 | 0 | 0 |
+| **SPY @ 2.0x** | **104.0** | **45.3** | **1.31** | 34.7 | 0 | 0 |
+
+In-sample the system is negative at every leverage: −4.9%, −6.5%, and −7.5%, at
+Sharpe −0.80, −0.78, and −0.71. It works in neither half.
+
+Three things need stating precisely, because the headline numbers overstate the
+case against it:
+
+**1. The return gap is partly a sizing artifact, so the Sharpe gap is the actual
+finding.** At 1.0x the book runs roughly 23% gross — conviction averages 0.30,
+multiplied by a `TARGET_ANNUAL_VOL / realised` term near 0.16 for SPY, giving
+about 4.7% per position across five symbols. Comparing +1.0% against SPY's +46.4%
+is comparing a 23%-exposure book to a 100%-exposure one, and the drawdowns confirm
+it: 2.9% against 18.7%. A low-exposure book is not thereby a bad book. But Sharpe
+is scale-invariant, and 0.20 against 1.31 does not depend on how large the
+positions are. That is the comparison that holds.
+
+**2. This is not a clean test of the method at its designed risk level.** The
+framework's published scalars are meant to produce an average absolute forecast
+near 10.0. Observed average forecast was ~3.0 — the system ran at roughly 30% of
+its intended conviction before the volatility budget was applied. Either the 1.4
+diversification multiplier is too low for these speed pairs, or the scalars do not
+reproduce their published scale on this data. Correcting it would raise returns and
+drawdown together and should leave Sharpe near where it is, but until it is
+corrected, this result is evidence about *this implementation*, not about Carver's
+method.
+
+**3. Sharpe decays with leverage while the benchmark's stays flat.** SPY holds
+exactly 1.31 at 1.0x, 1.5x, and 2.0x — the invariance that clean leverage should
+produce, and a check that this harness measures what its column labels claim. The
+strategy instead falls 0.20 → 0.02 → 0.03 under identical treatment. Since
+leverage alone cannot move a Sharpe ratio, the decay is friction the strategy
+generates itself: 126 trades with 63 shorts, paying slippage on churn that the
+signal does not earn back.
 
 ## Why the numbers didn't support going further
 
@@ -134,7 +185,7 @@ consistency is itself informative.
 **The honest sample is small.** Alpaca's free data plan capped the history at
 roughly six years (2020-07 to 2026-08) despite a ten-year request, giving 25
 rebalances per half. A Sharpe computed over 25 portfolio decisions cannot be
-distinguished from luck, and the two halves disagreed with each other in both tests.
+distinguished from luck, and the two halves disagreed with each other in every test.
 
 ---
 
@@ -151,9 +202,12 @@ failure mode this instrumentation was built to detect, and it would find it agai
    the turnover the strategy actually generates.
 3. **Costs modeled, not assumed.** At 17× turnover, spread and borrow are first-order
    terms, not footnotes.
-4. **A structurally different source of return.** Both approaches tested here are
-   momentum in different clothing, and both failed in the same direction. A third
-   momentum variant is not an independent test.
+4. **A structurally different source of return.** Every approach tested here is
+   momentum in different clothing, and all of them failed in the same direction.
+   Another momentum variant is not an independent test.
+5. **The Carver forecast scale corrected.** An average absolute forecast near 10.0
+   rather than the observed 3.0, so that implementation is being judged at the risk
+   level it was designed for.
 
 ---
 
@@ -162,8 +216,10 @@ failure mode this instrumentation was built to detect, and it would find it agai
 The system works. Orders route, stops attach, risk limits hold, shorts execute,
 and the accounting reconciles. What it does not have is a strategy with a
 demonstrated edge, and the reason we know that is the validation harness, which
-was built to be capable of returning bad news and did so twice — including once
-against a result already committed to the repository.
+was built to be capable of returning bad news and did so every time it was asked —
+including once against a result already committed to the repository, and once
+against a benchmark comparison that had looked favourable until the benchmark was
+measured correctly.
 
 A trading system that cannot produce a negative result is not a trading system;
 it is a spreadsheet that agrees with you. This one disagreed, and the disagreement
