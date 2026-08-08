@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import requests
 from alpaca.common.enums import Sort
-from alpaca.data.enums import DataFeed
+from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.data.historical.crypto import CryptoHistoricalDataClient
 from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.requests import CryptoBarsRequest, StockBarsRequest
@@ -104,8 +104,17 @@ class Broker:
             # feed=IEX is required on the free data plan -- omitting it lets
             # the SDK default toward SIP, which this account isn't entitled
             # to and which silently degrades results instead of erroring.
+            # adjustment=ALL gives split- AND dividend-adjusted closes. Without
+            # it, a buy-and-hold benchmark is understated by its entire dividend
+            # yield, which is the same order of magnitude as any edge being
+            # measured against it.
             request = StockBarsRequest(
-                symbol_or_symbols=symbol, timeframe=timeframe, start=start, end=end, feed=DataFeed.IEX
+                symbol_or_symbols=symbol,
+                timeframe=timeframe,
+                start=start,
+                end=end,
+                feed=DataFeed.IEX,
+                adjustment=Adjustment.ALL,
             )
             bar_set = self.stock_data_client.get_stock_bars(request)
 

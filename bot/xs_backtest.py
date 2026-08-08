@@ -235,7 +235,9 @@ def run():
 
     print("\nRead the second table only. If the strategy row doesn't clearly beat "
           "the SPY row there, the strategy isn't worth running.")
-    print("Excludes dividends, borrow costs, and real fill quality. Discount accordingly.")
+    print("Bars are split- and dividend-adjusted, so the benchmark is total return. "
+          "Excludes borrow costs and real fill quality -- at this turnover, discount "
+          "accordingly.")
 
 
 if __name__ == "__main__":
