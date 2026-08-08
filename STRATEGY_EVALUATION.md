@@ -52,19 +52,31 @@ document rests on:
 
 ### Test 1 — Per-symbol strategies
 
-Three years of daily bars, walk-forward split. Out-of-sample results:
+Three years of daily bars, walk-forward split, on split- and dividend-adjusted
+bars. Out-of-sample results:
 
-| Symbol | Strategy | Return% | Sharpe | MaxDD% |
-|---|---|---|---|---|
-| SPY | trend_following | +2.2 | 0.60 | 2.5 |
-| QQQ | trend_following | +1.6 | 0.31 | 3.5 |
-| GLD | mean_reversion | −4.5 | −0.92 | 7.4 |
-| USO | mean_reversion | +0.8 | 0.13 | 8.2 |
-| BTC/USD | momentum_breakout | −3.9 | −0.85 | 5.4 |
+| Symbol | Strategy | Trades | Return% | Sharpe | MaxDD% |
+|---|---|---|---|---|---|
+| SPY | trend_following | 4 | +2.4 | 0.65 | 2.5 |
+| QQQ | trend_following | 7 | +1.7 | 0.33 | 3.5 |
+| GLD | mean_reversion | 9 | −4.5 | −0.92 | 7.4 |
+| USO | mean_reversion | 10 | +0.8 | 0.13 | 8.2 |
+| BTC/USD | momentum_breakout | 6 | −3.9 | −0.85 | 5.4 |
 
 Two strategies lose money out-of-sample with negative Sharpe. SPY and QQQ are
 positive but thin, and both trail buy-and-hold over the same window. USO's 0.13
 Sharpe across 10 trades is indistinguishable from noise.
+
+*These figures were regenerated after the dividend-adjustment fix. An earlier
+version of this document reported SPY at +2.2 / 0.60 Sharpe and QQQ at +1.6 /
+0.31, measured on unadjusted closes. Only the dividend-paying equity ETFs moved:
+GLD and USO hold no dividend-paying assets, and BTC/USD is crypto, which does not
+route through the adjusted-bars request path. That the three unaffected symbols
+are unchanged to the decimal is the check that the fix did what it claims. The
+correction is small here — unlike the cross-sectional test, these strategies are
+in-market only part of the time and frequently short, so they capture less of the
+dividend stream than a continuously-held benchmark does. The conclusion is
+unchanged.*
 
 ### Test 2 — Cross-sectional momentum
 
@@ -142,9 +154,6 @@ failure mode this instrumentation was built to detect, and it would find it agai
 4. **A structurally different source of return.** Both approaches tested here are
    momentum in different clothing, and both failed in the same direction. A third
    momentum variant is not an independent test.
-5. **Re-run the per-symbol results on dividend-adjusted bars.** Test 1 predates that
-   fix. Those numbers are stale and should be regenerated before they are cited
-   anywhere.
 
 ---
 
